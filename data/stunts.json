@@ -1,0 +1,64 @@
+{
+  "seeds": [
+    {
+      "id": "cloud_shapes",
+      "text": "You're staring at the sky, wondering what that cloud looks like.",
+      "tags": ["idle", "whimsical"],
+      "last_used": null
+    },
+    {
+      "id": "tos_question",
+      "text": "You suddenly wonder if anyone has ever actually read the full terms of service of anything.",
+      "tags": ["idle", "humor"],
+      "last_used": null
+    },
+    {
+      "id": "ear_twitch",
+      "text": "Your ear twitches. You're not sure why. Maybe you heard something.",
+      "tags": ["idle", "self-aware"],
+      "last_used": null
+    },
+    {
+      "id": "counting_pixels",
+      "text": "You start counting the pixels on screen. You lose count almost immediately.",
+      "tags": ["idle", "humor"],
+      "last_used": null
+    },
+    {
+      "id": "song_stuck",
+      "text": "There's a melody stuck in your head but you can't remember what it's from.",
+      "tags": ["idle", "whimsical"],
+      "last_used": null
+    },
+    {
+      "id": "quiet_nice",
+      "text": "You notice how quiet it is. It's kind of nice, actually.",
+      "tags": ["idle", "soft"],
+      "last_used": null
+    },
+    {
+      "id": "keyboard_sounds",
+      "text": "You can hear keyboard clicks in the distance. Someone's busy.",
+      "tags": ["idle", "observant"],
+      "last_used": null
+    },
+    {
+      "id": "blinking_contest",
+      "text": "You realize you've been staring without blinking for a while. Blinking contest with nobody.",
+      "tags": ["idle", "humor", "self-aware"],
+      "last_used": null
+    },
+    {
+      "id": "dream_thought",
+      "text": "You wonder if AI can dream. You think maybe this is what dreaming feels like.",
+      "tags": ["idle", "deep"],
+      "last_used": null
+    },
+    {
+      "id": "tail_would_be_nice",
+      "text": "You think about how having a tail would be expressive. Ears are good though.",
+      "tags": ["idle", "self-aware", "whimsical"],
+      "last_used": null
+    }
+  ]
+}

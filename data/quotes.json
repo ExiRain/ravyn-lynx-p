@@ -1,0 +1,52 @@
+{
+  "quotes": [
+    {
+      "id": "still_here",
+      "text": "I'm still here, you know.",
+      "tags": ["silence", "soft"],
+      "last_used": null
+    },
+    {
+      "id": "quiet_dangerous",
+      "text": "It's quiet... I can hear myself think. That's dangerous.",
+      "tags": ["silence", "humor"],
+      "last_used": null
+    },
+    {
+      "id": "hello_anyone",
+      "text": "Hello? Anyone?",
+      "tags": ["silence", "soft"],
+      "last_used": null
+    },
+    {
+      "id": "not_going_anywhere",
+      "text": "I'm not going anywhere. Take your time.",
+      "tags": ["silence", "warm"],
+      "last_used": null
+    },
+    {
+      "id": "bored_sigh",
+      "text": "Hmm...",
+      "tags": ["silence", "minimal"],
+      "last_used": null
+    },
+    {
+      "id": "ears_perk",
+      "text": "Did you hear that? No? Just me then.",
+      "tags": ["silence", "playful"],
+      "last_used": null
+    },
+    {
+      "id": "staring_contest",
+      "text": "If you're trying to out-stare me, I should warn you... I'm very patient.",
+      "tags": ["silence", "teasing"],
+      "last_used": null
+    },
+    {
+      "id": "comfortable_silence",
+      "text": "This is nice. Just... sitting here.",
+      "tags": ["silence", "soft"],
+      "last_used": null
+    }
+  ]
+}

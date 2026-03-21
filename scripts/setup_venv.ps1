@@ -7,4 +7,6 @@ python -m venv venv
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 
-Write-Host "PC client environment ready"
+Write-Host ""
+Write-Host "Ravyn-Lynx Orchestrator environment ready"
+Write-Host "Run with: .\scripts\start_client.ps1"

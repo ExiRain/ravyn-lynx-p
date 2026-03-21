@@ -16,6 +16,21 @@ class Settings:
 
     QUEUE_REQUEST = "ravyn.request"
     QUEUE_RESPONSE = "ravyn.response"
+    QUEUE_STATUS = "ravyn.status"
+
+    # --- Dispatcher ---
+    DISPATCH_POLL_INTERVAL = 0.1
+    IDLE_POLL_INTERVAL = 0.5
+
+    # --- Silence Filler ---
+    SILENCE_THRESHOLD = 10.0            # val(600)
+    SILENCE_MIN_INTERVAL = 25.0         # val(120)
+    IMPROV_ENABLED = True
+    QUOTE_ENABLED = True
+    IMPROV_WEIGHT = 0.6
+
+    # --- Twitch ---
+    TWITCH_CHANNEL = "exiledra1n"          # your channel name (lowercase)
 
 
 def get_settings():
