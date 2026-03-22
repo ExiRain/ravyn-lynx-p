@@ -1,2 +1,7 @@
 pika
-twitchio
+requests
+chatterbox-tts
+fastapi
+uvicorn[standard]
+soundfile
+numpy

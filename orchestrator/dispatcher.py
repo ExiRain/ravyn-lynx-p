@@ -69,6 +69,8 @@ class Dispatcher:
                 host=s.RABBIT_HOST,
                 port=s.RABBIT_PORT,
                 credentials=credentials,
+                heartbeat=60,
+                blocked_connection_timeout=30,
             )
         )
 
@@ -109,16 +111,22 @@ class Dispatcher:
         try:
             while self._running:
 
-                # wait while busy
+                # wait while busy — use connection.sleep to keep heartbeat alive
                 if self.is_busy():
-                    time.sleep(s.DISPATCH_POLL_INTERVAL)
+                    try:
+                        connection.sleep(s.DISPATCH_POLL_INTERVAL)
+                    except Exception:
+                        pass
                     continue
 
                 # try to get next signal
                 signal = self.queue.pop()
 
                 if signal is None:
-                    time.sleep(s.IDLE_POLL_INTERVAL)
+                    try:
+                        connection.sleep(s.IDLE_POLL_INTERVAL)
+                    except Exception:
+                        pass
                     continue
 
                 # set busy before publishing to prevent double-dispatch
