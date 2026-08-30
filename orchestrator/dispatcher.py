@@ -17,13 +17,16 @@ class Dispatcher:
 
     Pulls the highest-priority signal from the queue when Ravyn is idle,
     serializes it, and publishes to ravyn.request over RabbitMQ.
-    Tracks busy/idle state via the ravyn.status queue.
+
+    Busy state is owned locally: set here on dispatch, cleared by
+    services/response_listener.py once her audio has finished playing.
     """
 
     def __init__(self, queue: SignalQueue):
         self.queue = queue
         self.settings = get_settings()
         self.busy = False
+        self._busy_since = 0.0
         self._busy_lock = threading.Lock()
         self._on_dispatch_callbacks: list = []
         self._running = True
@@ -35,10 +38,27 @@ class Dispatcher:
     def set_busy(self, state: bool) -> None:
         with self._busy_lock:
             self.busy = state
+            self._busy_since = time.time() if state else 0.0
 
     def is_busy(self) -> bool:
+        """
+        Busy with a watchdog. If the notebook dies mid-request, or a response
+        never makes it back, nothing would ever clear the flag and Ravyn would
+        go permanently silent. Time it out instead.
+        """
         with self._busy_lock:
-            return self.busy
+            if not self.busy:
+                return False
+
+            elapsed = time.time() - self._busy_since
+            if elapsed > self.settings.BUSY_TIMEOUT:
+                print(f"[dispatcher] Busy for {elapsed:.0f}s with no response — "
+                      f"clearing (lost message?)")
+                self.busy = False
+                self._busy_since = 0.0
+                return False
+
+            return True
 
     # ---------------------------------------------------------
     # callbacks — silence filler hooks into this to reset timer

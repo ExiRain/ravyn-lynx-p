@@ -1,9 +1,13 @@
 """
 Ravyn-Lynx PC — Orchestrator + TTS + Audio Server
 
+The PC owns everything the viewer experiences: it decides what Ravyn
+reacts to, speaks it, and drives the avatar. The notebook is an LLM
+service — it writes her lines and nothing else.
+
 Usage:
-    python -m app.main                # full stack: orchestrator + PC TTS
-    python -m app.main --no-tts       # orchestrator only, use notebook TTS
+    python -m app.main                # full stack: orchestrator + TTS
+    python -m app.main --no-tts       # silent mode — log her lines, no audio
     python -m app.main --test         # mock sources
     python -m app.main --no-twitch
     python -m app.main --no-lol
@@ -18,7 +22,6 @@ from threading import Thread
 from app.settings import get_settings
 from orchestrator.priority_queue import SignalQueue
 from orchestrator.dispatcher import Dispatcher
-from orchestrator.status_listener import start_status_listener
 from sources.silence_filler import SilenceFiller
 
 
@@ -40,7 +43,7 @@ def main():
     if tts_enabled:
         print("  *** PC TTS ACTIVE (Chatterbox Turbo) ***")
     else:
-        print("  TTS: notebook (remote)")
+        print("  *** SILENT MODE — no audio ***")
     print("=" * 50)
     print(f"  Rabbit: {settings.RABBIT_HOST}:{settings.RABBIT_PORT}")
     if not NO_TWITCH and not TEST_MODE:
@@ -51,9 +54,16 @@ def main():
         print(f"  Audio: ws://localhost:{settings.AUDIO_SERVER_PORT}/ws/audio")
     print("=" * 50)
 
-    # --- PC TTS pipeline (if enabled) ---
+    # --- Orchestrator core ---
+    # Built first: the response listener clears its busy flag, so it needs
+    # the dispatcher to exist before it starts consuming.
+    queue = SignalQueue()
+    dispatcher = Dispatcher(queue)
+
+    # --- Audio pipeline ---
+    tts = None
+
     if tts_enabled:
-        # start local WebSocket audio server for Godot
         from services.audio_server import app as audio_app
 
         def _run_audio_server():
@@ -67,7 +77,6 @@ def main():
         Thread(target=_run_audio_server, daemon=True, name="audio-server").start()
         time.sleep(1)  # let server start
 
-        # load TTS engine
         from services.tts_engine import TTSEngine
         tts = TTSEngine(
             device=settings.TTS_DEVICE,
@@ -75,22 +84,18 @@ def main():
         )
         tts.load()
 
-        # start response listener (consumes LLM responses, runs TTS, streams to Godot)
-        from services.response_listener import start_response_listener
+    # Consumes ravyn.response, speaks it, then marks Ravyn idle again.
+    # Runs in silent mode too — otherwise nothing would ever clear busy
+    # and the dispatcher would stall after the first signal.
+    from services.response_listener import start_response_listener
 
-        Thread(
-            target=start_response_listener,
-            args=(tts,),
-            daemon=True,
-            name="response-listener",
-        ).start()
-
-    # --- Orchestrator ---
-    queue = SignalQueue()
-    dispatcher = Dispatcher(queue)
-
-    Thread(target=start_status_listener, args=(dispatcher,),
-           daemon=True, name="status-listener").start()
+    Thread(
+        target=start_response_listener,
+        args=(tts,),
+        kwargs={"on_complete": lambda: dispatcher.set_busy(False)},
+        daemon=True,
+        name="response-listener",
+    ).start()
 
     # --- Silence Filler ---
     silence = SilenceFiller(queue, DATA_DIR)

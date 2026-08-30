@@ -20,12 +20,15 @@ from pathlib import Path
 
 class TTSEngine:
 
-    SAMPLE_RATE = 24000
+    # Fallback only — the real rate comes from the model at load time.
+    # Getting this wrong pitches her whole voice up or down.
+    DEFAULT_SAMPLE_RATE = 24000
 
     def __init__(self, device: str = "cuda", voice_ref: str | None = None):
         self.device = device
         self.voice_ref = voice_ref
         self.model = None
+        self.sample_rate = self.DEFAULT_SAMPLE_RATE
         self._loaded = False
 
     def load(self):
@@ -36,8 +39,10 @@ class TTSEngine:
         from chatterbox.tts import ChatterboxTTS
         self.model = ChatterboxTTS.from_pretrained(device=self.device)
 
+        self.sample_rate = int(getattr(self.model, "sr", self.DEFAULT_SAMPLE_RATE))
+
         self._loaded = True
-        print(f"[tts] Loaded in {time.time() - t0:.1f}s")
+        print(f"[tts] Loaded in {time.time() - t0:.1f}s  sr={self.sample_rate}")
 
     def generate(self, text: str, mood: float = 0.0, tired: float = 0.0) -> bytes:
         """
@@ -106,10 +111,10 @@ class TTSEngine:
         audio = audio.astype(np.float32)
 
         buf = io.BytesIO()
-        sf.write(buf, audio, self.SAMPLE_RATE, format="WAV", subtype="PCM_16")
+        sf.write(buf, audio, self.sample_rate, format="WAV", subtype="PCM_16")
         buf.seek(0)
         return buf.read()
 
     @property
     def sr(self) -> int:
-        return self.SAMPLE_RATE
+        return self.sample_rate
