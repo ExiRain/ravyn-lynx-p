@@ -119,6 +119,36 @@ Replies on `ravyn.response` are JSON:
 }
 ```
 
+## Language
+
+Resolved once in the dispatcher, immediately before publishing, so no signal
+source can forget to set it. The rule splits on whether anyone actually spoke
+to her:
+
+- **Ambient** — `silence_filler`, `promotion`, `game`. Nobody addressed her, so
+  there is no language to mirror. Always `LANG_AMBIENT`. This is what stops her
+  flipping language mid-stream.
+- **Addressed** — `chat`, `voice`. Follows `LANG_REPLY`.
+
+`LANG_REPLY` options:
+
+| Value | Behaviour |
+|---|---|
+| `en` / `ru` | Always that language. `ru` is the way to test her Russian. |
+| `multilang` | The LLM mirrors whoever wrote to her |
+| `detect` | Decided from the message text *before* generating |
+
+`detect` is the one that will also work for TTS: it resolves the language
+before the LLM runs, so the voice can be told too. With `multilang` you only
+learn the language from her output, which means detecting on the way out.
+
+Precedence: `Signal.lang` (a source that knows) → `SPEAKER_LANG` → ambient →
+`LANG_REPLY`.
+
+Note that her persona is written in English — the banned openers, "fufu", the
+teammate vocabulary. None of that survives translation, so Russian output
+currently loses those voice rules until a Russian persona addendum exists.
+
 ## Configuration
 
 All settings are in `app/settings.py`. Key toggles:
@@ -131,6 +161,9 @@ All settings are in `app/settings.py`. Key toggles:
 | `QUOTE_ENABLED` | True | Direct TTS quotes on/off |
 | `IMPROV_WEIGHT` | 0.6 | Probability of improv vs quote |
 | `TTS_ENABLED` | True | PC TTS on/off (`--no-tts` for silent mode) |
+| `LANG_AMBIENT` | `"en"` | Her idle voice — filler, game, promos |
+| `LANG_REPLY` | `"en"` | How she answers someone: `en`/`ru`/`multilang`/`detect` |
+| `SPEAKER_LANG` | `{}` | Per-person overrides, e.g. `{"someguy": "ru"}` |
 | `BUSY_TIMEOUT` | 90s | Watchdog — force idle if no response comes back |
 
 ## Requirements
