@@ -32,6 +32,27 @@ class Settings:
     # --- Twitch ---
     TWITCH_CHANNEL = "exiledra1n"
 
+    # --- Language ---
+    # Ambient: her own idle voice — silence filler, game reactions, promos.
+    # Nobody addressed her, so there is nothing to mirror. Keep this fixed;
+    # it is what stops her flipping language mid-stream.
+    LANG_AMBIENT = "en"
+
+    # Reply: how she answers someone who spoke to her.
+    #   "en"        — always English
+    #   "ru"        — always Russian (use this to test her Russian)
+    #   "multilang" — the LLM mirrors whoever wrote to her
+    #   "detect"    — decide from the message text before generating
+    #
+    # "detect" is the one that also works for TTS: it resolves the language
+    # BEFORE the LLM runs, so the voice can be told too. With "multilang"
+    # you only learn the language from her output.
+    LANG_REPLY = "en"
+
+    # Known speakers, lowercase -> language. Overrides LANG_REPLY.
+    # e.g. a Russian duo partner in Discord: {"someguy": "ru"}
+    SPEAKER_LANG = {}
+
     # --- PC TTS ---
     TTS_ENABLED = True                      # set False to use notebook TTS instead
     TTS_DEVICE = "cuda"                     # "cuda" or "cpu"

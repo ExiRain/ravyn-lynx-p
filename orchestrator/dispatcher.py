@@ -6,6 +6,7 @@ import threading
 
 import pika
 
+from orchestrator import language
 from orchestrator.models import Signal
 from orchestrator.priority_queue import SignalQueue
 from app.settings import get_settings
@@ -103,7 +104,28 @@ class Dispatcher:
     # dispatch a single signal
     # ---------------------------------------------------------
 
+    def _resolve_lang(self, signal: Signal) -> None:
+        """
+        Stamp the language on a signal just before it goes out.
+
+        Done here rather than in each source so no source can forget: every
+        request that reaches the notebook carries a resolved language. A
+        source that genuinely knows better sets signal.lang itself and this
+        leaves it alone.
+        """
+        s = self.settings
+        signal.lang = language.resolve(
+            source=signal.source,
+            text=signal.text,
+            context=signal.context,
+            explicit=signal.lang,
+            ambient=s.LANG_AMBIENT,
+            reply_policy=s.LANG_REPLY,
+            speaker_langs=s.SPEAKER_LANG,
+        )
+
     def _dispatch(self, signal: Signal, channel) -> None:
+        self._resolve_lang(signal)
         payload = json.dumps(signal.to_request())
 
         channel.basic_publish(
@@ -113,7 +135,8 @@ class Dispatcher:
         )
 
         print(f"[dispatch] source={signal.source}  mode={signal.mode}  "
-              f"skip_llm={signal.skip_llm}  text={signal.text[:60]}...")
+              f"lang={signal.lang}  skip_llm={signal.skip_llm}  "
+              f"text={signal.text[:60]}...")
 
     # ---------------------------------------------------------
     # main loop
