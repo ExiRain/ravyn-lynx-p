@@ -119,6 +119,31 @@ Replies on `ravyn.response` are JSON:
 }
 ```
 
+## TTS
+
+Two backends, switched by `TTS_BACKEND`:
+
+| | Languages | Notes |
+|---|---|---|
+| `qwen` | RU + EN + 8 more | Qwen3-TTS 1.7B, Apache 2.0, clones from a reference wav |
+| `chatterbox` | EN only | Fallback. Pinned to torch 2.6, which cannot drive a Blackwell card — it runs only because setup overrides that pin. |
+
+**Qwen needs `TTS_QWEN_REF_TEXT`**: the exact transcript of `TTS_VOICE_REF`, word
+for word. Cloning aligns the reference audio against that text, so a wrong or
+missing one degrades the voice badly. Startup refuses rather than sounding bad.
+
+**Install `faster-qwen3-tts` or you get no speed benefit.** The official package
+runs the reference implementation at roughly realtime (RTF ~1.3); CUDA graphs
+plus a static KV cache take the same model to ~4.8x. At batch size 1 this model
+is bound by kernel launch overhead, not compute, which is also why 1.7B costs
+almost nothing over 0.6B. The engine prefers the fast wrapper and falls back to
+the official package with a warning.
+
+Mood and tiredness do not modulate the Qwen voice — `Base` cloning has no
+equivalent of Chatterbox's `exaggeration`. Consistent with the project's rule
+that emotion comes from what she writes, not from post-processing; the values
+still drive her face.
+
 ## Language
 
 Resolved once in the dispatcher, immediately before publishing, so no signal
@@ -161,6 +186,8 @@ All settings are in `app/settings.py`. Key toggles:
 | `QUOTE_ENABLED` | True | Direct TTS quotes on/off |
 | `IMPROV_WEIGHT` | 0.6 | Probability of improv vs quote |
 | `TTS_ENABLED` | True | PC TTS on/off (`--no-tts` for silent mode) |
+| `TTS_BACKEND` | `"qwen"` | `qwen` (RU+EN) or `chatterbox` (EN only, fallback) |
+| `TTS_QWEN_REF_TEXT` | `""` | **Required** — transcript of the voice reference wav |
 | `LANG_AMBIENT` | `"en"` | Her idle voice — filler, game, promos |
 | `LANG_REPLY` | `"en"` | How she answers someone: `en`/`ru`/`multilang`/`detect` |
 | `SPEAKER_LANG` | `{}` | Per-person overrides, e.g. `{"someguy": "ru"}` |

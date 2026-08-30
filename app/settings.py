@@ -54,9 +54,25 @@ class Settings:
     SPEAKER_LANG = {}
 
     # --- PC TTS ---
-    TTS_ENABLED = True                      # set False to use notebook TTS instead
+    TTS_ENABLED = True                      # False (or --no-tts) = silent mode
     TTS_DEVICE = "cuda"                     # "cuda" or "cpu"
-    TTS_VOICE_REF = "data/ravyn_voice_ref.wav"                      # path to reference wav for voice cloning, empty = default
+    TTS_VOICE_REF = "data/ravyn_voice_ref.wav"   # reference wav for voice cloning
+
+    # "qwen"       — Qwen3-TTS. Russian + English, better quality.
+    # "chatterbox" — Chatterbox Turbo. English only. Fallback if qwen misbehaves.
+    TTS_BACKEND = "qwen"
+
+    TTS_QWEN_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+
+    # REQUIRED for cloning: exactly what is said in TTS_VOICE_REF, word for
+    # word. Qwen aligns the reference audio against this transcript; a wrong
+    # or empty one degrades the clone badly, so load() refuses to start
+    # without it.
+    TTS_QWEN_REF_TEXT = ""
+
+    # "sdpa" works everywhere torch does. "flash_attention_2" is faster but
+    # flash-attn is painful to build on Windows — only set it if you have it.
+    TTS_QWEN_ATTN = "sdpa"
     AUDIO_SERVER_HOST = "0.0.0.0"
     AUDIO_SERVER_PORT = 9000                # Godot connects to ws://localhost:9000/ws/audio
 

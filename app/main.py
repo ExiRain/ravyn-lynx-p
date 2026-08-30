@@ -41,7 +41,7 @@ def main():
     if TEST_MODE:
         print("  *** TEST MODE ***")
     if tts_enabled:
-        print("  *** PC TTS ACTIVE (Chatterbox Turbo) ***")
+        print(f"  *** PC TTS ACTIVE ({settings.TTS_BACKEND}) ***")
     else:
         print("  *** SILENT MODE — no audio ***")
     print("=" * 50)
@@ -77,11 +77,8 @@ def main():
         Thread(target=_run_audio_server, daemon=True, name="audio-server").start()
         time.sleep(1)  # let server start
 
-        from services.tts_engine import TTSEngine
-        tts = TTSEngine(
-            device=settings.TTS_DEVICE,
-            voice_ref=settings.TTS_VOICE_REF or None,
-        )
+        from services.tts_engine import build_engine
+        tts = build_engine(settings)
         tts.load()
 
     # Consumes ravyn.response, speaks it, then marks Ravyn idle again.

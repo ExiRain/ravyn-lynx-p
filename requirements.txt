@@ -1,6 +1,8 @@
 pika
 requests
 chatterbox-tts
+qwen-tts
+faster-qwen3-tts
 fastapi
 uvicorn[standard]
 soundfile

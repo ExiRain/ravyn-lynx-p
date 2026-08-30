@@ -40,6 +40,18 @@ MAX_SENTENCES = 3
 # artefacts on the stubs. Tune by ear.
 MIN_WORDS_PER_CHUNK = 4
 
+# Time-to-first-audio is just "how long is the first chunk" — she cannot start
+# speaking until chunk 1 is synthesised. So break the opening on its own
+# punctuation to get her talking sooner, and leave later chunks long (they
+# generate while she is already speaking, so their length costs nothing).
+#
+# Only existing punctuation is used as a break point; splitting mid-clause to
+# hit a word count makes the prosody obviously wrong.
+FIRST_CHUNK_MAX_WORDS = 8   # above this, try to break the opening
+FIRST_CHUNK_MIN_WORDS = 3   # below this, TTS renders stubs badly
+
+_CLAUSE_BREAK = re.compile(r'(?<=[,;:—–])\s*')
+
 
 def _clean_for_tts(text: str) -> str:
     text = re.sub(r'[\[\(][^\]\)]{1,20}[\]\)]', '', text)
@@ -72,7 +84,38 @@ def split_sentences(text: str) -> list[str]:
         else:
             result.append(s)
 
-    return result[:MAX_SENTENCES]
+    return _split_first_chunk(result[:MAX_SENTENCES])
+
+
+def _split_first_chunk(chunks: list[str]) -> list[str]:
+    """Break a long opening chunk on clause punctuation so she starts sooner."""
+    if not chunks:
+        return chunks
+
+    first = chunks[0]
+    if len(first.split()) <= FIRST_CHUNK_MAX_WORDS:
+        return chunks
+
+    parts = [p for p in _CLAUSE_BREAK.split(first) if p and p.strip()]
+    if len(parts) < 2:
+        return chunks  # nothing to break on; a long opening it is
+
+    # Smallest prefix that is still long enough to synthesise cleanly.
+    head_parts: list[str] = []
+    taken = 0
+    for i, part in enumerate(parts):
+        head_parts.append(part)
+        taken = i + 1
+        if len(" ".join(head_parts).split()) >= FIRST_CHUNK_MIN_WORDS:
+            break
+
+    head = " ".join(head_parts).strip()
+    rest = " ".join(parts[taken:]).strip()
+
+    if not head or not rest:
+        return chunks
+
+    return [head, rest] + chunks[1:]
 
 
 def start_response_listener(
@@ -131,8 +174,9 @@ def start_response_listener(
             mood = msg.get("mood") or 0.0
             tired = msg.get("tired") or 0.0
             event_type = msg.get("event_type", "")
+            lang = msg.get("lang") or "en"
         except json.JSONDecodeError:
-            text, mood, tired, event_type = raw, 0.0, 0.0, ""
+            text, mood, tired, event_type, lang = raw, 0.0, 0.0, "", "en"
 
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -151,11 +195,11 @@ def start_response_listener(
 
         sentences = split_sentences(text)
         print(f"[{ts}][response] Speaking {len(sentences)} sentence(s), "
-              f"mood={mood} tired={tired}")
+              f"mood={mood} tired={tired} lang={lang}")
 
-        _speak(sentences, float(mood), float(tired))
+        _speak(sentences, float(mood), float(tired), lang)
 
-    def _speak(sentences: list[str], mood: float, tired: float):
+    def _speak(sentences: list[str], mood: float, tired: float, lang: str):
         had_clients = audio_server.has_clients()
         if not had_clients:
             print("[response] WARNING: no Godot client connected")
@@ -170,7 +214,8 @@ def start_response_listener(
             t0 = time.time()
 
             try:
-                wav_bytes = tts.generate(sentence, mood=mood, tired=tired)
+                wav_bytes = tts.generate(sentence, mood=mood,
+                                         tired=tired, lang=lang)
             except Exception as e:
                 # One failed sentence shouldn't cost the whole line
                 print(f"[response]   [{idx}/{len(sentences)}] TTS failed: {e}")
