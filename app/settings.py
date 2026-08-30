@@ -16,11 +16,11 @@ class Settings:
 
     QUEUE_REQUEST = "ravyn.request"
     QUEUE_RESPONSE = "ravyn.response"
-    QUEUE_STATUS = "ravyn.status"
 
     # --- Dispatcher ---
     DISPATCH_POLL_INTERVAL = 0.1
     IDLE_POLL_INTERVAL = 0.5
+    BUSY_TIMEOUT = 90.0                     # watchdog: force-idle if no response
 
     # --- Silence Filler ---
     SILENCE_THRESHOLD = 600.0
