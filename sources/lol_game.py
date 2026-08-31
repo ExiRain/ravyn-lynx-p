@@ -74,6 +74,9 @@ class LolGameSource:
         self._player_champion = ""
         self._player_team = ""
         self._name_to_team: dict[str, str] = {}
+        # summoner/riot id -> champion. Ravyn says "Zed", not "xX_Slayer_69_Xx":
+        # summoner names are unpronounceable and TTS reads them character soup.
+        self._name_to_champion: dict[str, str] = {}
         self._has_real_enemies = False
 
         # kill coalescing
@@ -115,6 +118,14 @@ class LolGameSource:
         if isinstance(obj, list) and obj:
             return random.choice(obj)
         return ""
+
+    def _champ(self, name: str) -> str:
+        """Summoner or riot name -> champion name. Falls back to the input."""
+        if not name:
+            return name
+        return (self._name_to_champion.get(name)
+                or self._name_to_champion.get(name.lower())
+                or name)
 
     def _pick_teammate_name(self) -> str:
         return self._pick_quote("teammates", "names") or "creatures"
@@ -159,6 +170,7 @@ class LolGameSource:
             self._player_summoner = self._player_riot_id.split("#")[0]
 
         self._name_to_team = {}
+        self._name_to_champion = {}
         enemy_count = 0
         for p in data.get("allPlayers", []):
             team = p.get("team", "")
@@ -169,10 +181,16 @@ class LolGameSource:
                 if name:
                     self._name_to_team[name] = team
                     self._name_to_team[name.lower()] = team
+                    if champion:
+                        self._name_to_champion[name] = champion
+                        self._name_to_champion[name.lower()] = champion
             if "#" in riot_id:
                 short = riot_id.split("#")[0]
                 self._name_to_team[short] = team
                 self._name_to_team[short.lower()] = team
+                if champion:
+                    self._name_to_champion[short] = champion
+                    self._name_to_champion[short.lower()] = champion
             is_me = (summoner == self._player_summoner
                      or riot_id == self._player_riot_id
                      or (self._player_summoner and summoner.lower() == self._player_summoner.lower()))
@@ -329,12 +347,13 @@ class LolGameSource:
             if side == "mine":
                 seed = self._pick_quote("teammates", "ally_kill")
                 self._push_event("AllyKill",
-                    f"One of {teammate_name} killed {victim}. {seed}",
+                    f"One of {teammate_name} killed {self._champ(victim)}. {seed}",
                     event, "AllyKill")
             else:
                 seed = self._pick_quote("teammates", "ally_death")
                 self._push_event("AllyDeath",
-                    f"Your {teammate_name.replace('your ', '')} {victim} died. {seed}",
+                    f"Your {teammate_name.replace('your ', '')} "
+                    f"{self._champ(victim)} died. {seed}",
                     event, "AllyDeath")
 
     def _flush_kills(self):
@@ -535,6 +554,7 @@ class LolGameSource:
             "game": "league_of_legends",
             "event_type": event_type,
             "player_name": self._player_summoner,
+            "player_champion": self._player_champion,
         }
         if extra_context:
             ctx.update(extra_context)
