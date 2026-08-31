@@ -29,6 +29,22 @@ class Settings:
     QUOTE_ENABLED = True
     IMPROV_WEIGHT = 0.6
 
+    # --- Game reaction rate ---
+    # Chance she says anything at all about an event. Frequent, low-stakes
+    # things get filtered here so she is not commentating every second.
+    # Anything absent defaults to 1.0 (always). MyDeath is deliberately absent:
+    # lol_game._handle_death already coin-flips deaths 1-4, so a second roll
+    # here would silence her twice over.
+    REACTION_CHANCE = {
+        "AllyDeath":     0.6,
+        "AllyKill":      0.35,
+        "TurretKilled":  0.3,
+        "HeraldKill":    0.5,
+        "DragonKill":    0.7,
+        "MyKill":        0.8,
+        "InhibKilled":   0.9,
+    }
+
     # --- Twitch ---
     TWITCH_CHANNEL = "exiledra1n"
 

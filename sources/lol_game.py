@@ -87,6 +87,7 @@ class LolGameSource:
         self._death_count = 0
         self._kills_since_last_death = 0
         self._assists_since_last_death = 0
+        self._logged_kill_sample = False
 
         # teamfight tracking
         self._recent_kills: list[dict] = []
@@ -206,7 +207,19 @@ class LolGameSource:
         self._has_real_enemies = enemy_count > 0
 
         print(f"[lol] Game detected! {self._player_summoner} as {self._player_champion} ({self._player_team})")
+        print(f"[lol]   riotId={self._player_riot_id!r} summonerName={active.get('summonerName', '')!r}")
         print(f"[lol]   Enemies: {self._has_real_enemies} | Names: {len(self._name_to_team)}")
+
+        # If identity does not resolve, _is_me() fails and HIS kills and deaths
+        # get routed as ally events — she then talks about him in third person
+        # and reacts to everything. Non-Latin names are the usual cause.
+        if not self._player_summoner and not self._player_riot_id:
+            print("[lol]   WARNING: could not identify the active player — "
+                  "your own kills/deaths will be misrouted as ally events")
+        elif not self._player_champion:
+            print("[lol]   WARNING: active player matched no entry in allPlayers — "
+                  "check whether summonerName/riotId match the allPlayers names")
+        self._logged_kill_sample = False
 
     # ---------------------------------------------------------
     # polling
@@ -318,6 +331,12 @@ class LolGameSource:
         victim = event.get("VictimName", "")
         assisters = event.get("Assisters", [])
         event_time = event.get("EventTime", self._current_game_time)
+
+        if not getattr(self, "_logged_kill_sample", False):
+            print(f"[lol] First kill event — KillerName={killer!r} VictimName={victim!r}")
+            print(f"[lol]   me: summoner={self._player_summoner!r} "
+                  f"riot={self._player_riot_id!r} champ={self._player_champion!r}")
+            self._logged_kill_sample = True
 
         i_killed = self._is_me(killer)
         i_died = self._is_me(victim)
@@ -548,6 +567,12 @@ class LolGameSource:
 
     def _push_event(self, config_key: str, text: str, raw_event: dict,
                     event_type: str, extra_context: dict = None):
+        chance = settings.REACTION_CHANCE.get(
+            config_key, settings.REACTION_CHANCE.get(event_type, 1.0))
+        if chance < 1.0 and random.random() > chance:
+            print(f"[lol] {config_key}: skipped (reaction chance {chance})")
+            return
+
         config = EVENT_CONFIG.get(config_key, EVENT_CONFIG.get(event_type, {"priority": 5, "ttl": 15}))
         ctx = {
             "trigger": "game_event",
