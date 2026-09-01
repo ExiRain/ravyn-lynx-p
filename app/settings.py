@@ -68,7 +68,7 @@ class Settings:
     # word. Qwen aligns the reference audio against this transcript; a wrong
     # or empty one degrades the clone badly, so load() refuses to start
     # without it.
-    TTS_QWEN_REF_TEXT = ""
+    TTS_QWEN_REF_TEXT = "Hello... I'm Ravyn, a fox spirit who watches over this stream. Do not test my patience."
 
     # "sdpa" works everywhere torch does. "flash_attention_2" is faster but
     # flash-attn is painful to build on Windows — only set it if you have it.
