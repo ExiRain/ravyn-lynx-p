@@ -23,9 +23,11 @@ class Dispatcher:
     services/response_listener.py once her audio has finished playing.
     """
 
-    def __init__(self, queue: SignalQueue):
+    def __init__(self, queue: SignalQueue, voice_gate=None):
         self.queue = queue
+        self.voice_gate = voice_gate
         self.settings = get_settings()
+        self._last_hold_log = 0.0
         self.busy = False
         self._busy_since = 0.0
         self._busy_lock = threading.Lock()
@@ -104,6 +106,31 @@ class Dispatcher:
     # dispatch a single signal
     # ---------------------------------------------------------
 
+    def _gate_holds(self, signal: Signal) -> bool:
+        """
+        True if this signal must wait because the streamer is talking.
+
+        Checked against the queue head before popping, so a held signal keeps
+        its place and its TTL keeps running — a game reaction that waits out
+        its window expires instead of arriving late and out of context.
+        """
+        if self.voice_gate is None:
+            return False
+
+        # subs, follows, donations cut through
+        if signal.priority <= self.settings.VOICE_INTERRUPT_PRIORITY:
+            return False
+
+        if not self.voice_gate.should_hold():
+            return False
+
+        now = time.time()
+        if now - self._last_hold_log > 3.0:
+            self._last_hold_log = now
+            print(f"[dispatcher] Holding {signal.source} — you are talking")
+
+        return True
+
     def _resolve_lang(self, signal: Signal) -> None:
         """
         Stamp the language on a signal just before it goes out.
@@ -156,6 +183,16 @@ class Dispatcher:
 
                 # wait while busy — use connection.sleep to keep heartbeat alive
                 if self.is_busy():
+                    try:
+                        connection.sleep(s.DISPATCH_POLL_INTERVAL)
+                    except Exception:
+                        pass
+                    continue
+
+                # peek before popping: if the gate holds this one it keeps
+                # its place in the queue and carries on ageing out
+                head = self.queue.peek()
+                if head is not None and self._gate_holds(head):
                     try:
                         connection.sleep(s.DISPATCH_POLL_INTERVAL)
                     except Exception:
