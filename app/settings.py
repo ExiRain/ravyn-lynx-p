@@ -29,6 +29,35 @@ class Settings:
     QUOTE_ENABLED = True
     IMPROV_WEIGHT = 0.6
 
+    # --- Voice gate (VAD) ---
+    # Holds her back while you are talking. She never gets interrupted
+    # mid-line; this only decides when she is allowed to START.
+    VOICE_GATE_ENABLED = True
+    VOICE_HOLD_AFTER_SPEECH = 5.0    # seconds of quiet before she may speak
+    VOICE_VAD_THRESHOLD = 0.5        # Silero speech probability, 0-1
+    VOICE_INPUT_DEVICE = None        # None = system default; int or name otherwise
+
+    # Signals at or below this priority ignore the gate. Subs, follows and
+    # donations are priority 1-2 — a viewer paid for that moment and it should
+    # land promptly. Game chatter is 3+ and waits its turn.
+    VOICE_INTERRUPT_PRIORITY = 2
+
+    # --- Game reaction rate ---
+    # Chance she says anything at all about an event. Frequent, low-stakes
+    # things get filtered here so she is not commentating every second.
+    # Anything absent defaults to 1.0 (always). MyDeath is deliberately absent:
+    # lol_game._handle_death already coin-flips deaths 1-4, so a second roll
+    # here would silence her twice over.
+    REACTION_CHANCE = {
+        "AllyDeath":     0.6,
+        "AllyKill":      0.35,
+        "TurretKilled":  0.3,
+        "HeraldKill":    0.5,
+        "DragonKill":    0.7,
+        "MyKill":        0.8,
+        "InhibKilled":   0.9,
+    }
+
     # --- Twitch ---
     TWITCH_CHANNEL = "exiledra1n"
 
