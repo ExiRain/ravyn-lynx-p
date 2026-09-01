@@ -6,6 +6,14 @@ This is where Ravyn's busy state is cleared. The dispatcher marks her busy
 when it publishes a request; she is only idle again once the last of her
 audio has actually finished playing, which is here.
 
+It is also where the voice gate makes its real decision. The dispatcher's
+check happened before the LLM ran — several seconds and a whole TTS pass ago —
+so it says nothing about whether you are talking *now*. Here the audio for her
+opening line already exists, which makes waiting almost free: when you stop,
+she speaks immediately instead of starting a fresh three-second pipeline. It
+is also where she is muted, for exactly as long as she is audible and no
+longer.
+
 Runs in its own thread, bridging pika (sync) to the audio server's
 async event loop.
 """
@@ -121,6 +129,8 @@ def _split_first_chunk(chunks: list[str]) -> list[str]:
 def start_response_listener(
     tts: TTSEngine | None,
     on_complete: Callable[[], None] | None = None,
+    voice_gate=None,
+    get_priority: Callable[[], int] | None = None,
 ):
     """
     Blocking consumer — run in a daemon thread.
@@ -131,6 +141,11 @@ def start_response_listener(
     on_complete fires exactly once per message, whatever happens, including
     empty responses and TTS failures. Skipping it would leave the dispatcher
     busy until its watchdog trips.
+
+    voice_gate is the VAD, or None with --no-voice. get_priority reports the
+    priority of the signal currently in flight — the response carries no
+    priority of its own, and only one signal is ever in flight, so the
+    dispatcher can just be asked.
     """
 
     credentials = pika.PlainCredentials(settings.RABBIT_USER, settings.RABBIT_PASS)
@@ -199,37 +214,117 @@ def start_response_listener(
 
         _speak(sentences, float(mood), float(tired), lang)
 
+    # -----------------------------------------------------------------
+    # the gate check that matters
+    # -----------------------------------------------------------------
+
+    def _wait_for_gate() -> bool:
+        """
+        True if she may speak now. False means drop the line entirely.
+
+        Dropping beats saying it late. A held line is an answer to a moment
+        that has passed: by the time you finish talking, the game event it
+        reacted to is over and the chat message it answered has scrolled. Her
+        being quiet about it reads as her having let it go, which is in
+        character; her bringing it up eight seconds later reads as a bug.
+        """
+        if voice_gate is None:
+            return True
+
+        priority = get_priority() if get_priority else 5
+        if priority <= settings.VOICE_INTERRUPT_PRIORITY:
+            return True     # subs, follows, donations cut through
+
+        if not voice_gate.should_hold():
+            return True
+
+        deadline = time.time() + settings.VOICE_MAX_DEFER
+        print(f"[response] Line ready — waiting for you to finish "
+              f"(up to {settings.VOICE_MAX_DEFER:.0f}s)")
+
+        while voice_gate.should_hold():
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.1)
+
+        return True
+
+    def _synth(sentence: str, mood: float, tired: float, lang: str):
+        """Returns wav bytes, or None if this chunk could not be rendered."""
+        t0 = time.time()
+        try:
+            wav_bytes = tts.generate(sentence, mood=mood, tired=tired, lang=lang)
+        except Exception as e:
+            print(f"[response]   TTS failed: {e}")
+            return None, 0.0
+        if not wav_bytes:
+            print("[response]   TTS returned nothing")
+            return None, 0.0
+        return wav_bytes, time.time() - t0
+
     def _speak(sentences: list[str], mood: float, tired: float, lang: str):
         had_clients = audio_server.has_clients()
         if not had_clients:
             print("[response] WARNING: no Godot client connected")
 
+        # Synthesise the opening chunk BEFORE asking the gate. The wait then
+        # costs nothing — the audio is in hand, so the moment you stop talking
+        # she speaks, instead of starting an LLM-to-TTS pipeline from cold and
+        # arriving three seconds into your next sentence.
+        #
+        # Nothing is sent to Godot until the gate says yes: begin_utterance
+        # changes her expression, and an avatar that visibly gears up and then
+        # says nothing is worse than one that stays still.
+        opening = None
+        while sentences and opening is None:
+            sentence = sentences.pop(0)
+            wav_bytes, gen_s = _synth(sentence, mood, tired, lang)
+            if wav_bytes:
+                opening = (sentence, wav_bytes, gen_s)
+
+        if opening is None:
+            print("[response] Nothing synthesised — saying nothing")
+            return
+
+        if not _wait_for_gate():
+            print(f"[response] Dropped — you are still talking after "
+                  f"{settings.VOICE_MAX_DEFER:.0f}s: {opening[0][:50]}")
+            return
+
+        # From here she is committed to the line, so the mic goes deaf until
+        # the last of it has played. try/finally, because a mute that leaks
+        # leaves her deaf for the rest of the stream.
+        if voice_gate is not None:
+            voice_gate.set_muted(True)
+
+        try:
+            _play(opening, sentences, mood, tired, lang, had_clients)
+        finally:
+            if voice_gate is not None:
+                voice_gate.set_muted(False)
+
+    def _play(opening, rest: list[str], mood: float, tired: float,
+              lang: str, had_clients: bool):
         _run_async(audio_server.begin_utterance(mood, tired), timeout=5)
 
+        total = len(rest) + 1
         first_audio_at = None
         total_duration = 0.0
-        is_first = True
 
-        for idx, sentence in enumerate(sentences, 1):
-            t0 = time.time()
+        sentence, wav_bytes, gen_s = opening
 
-            try:
-                wav_bytes = tts.generate(sentence, mood=mood,
-                                         tired=tired, lang=lang)
-            except Exception as e:
-                # One failed sentence shouldn't cost the whole line
-                print(f"[response]   [{idx}/{len(sentences)}] TTS failed: {e}")
-                continue
-
-            if not wav_bytes:
-                print(f"[response]   [{idx}/{len(sentences)}] TTS returned nothing")
-                continue
+        for idx in range(1, total + 1):
+            if idx > 1:
+                sentence = rest[idx - 2]
+                wav_bytes, gen_s = _synth(sentence, mood, tired, lang)
+                if not wav_bytes:
+                    continue
 
             duration = _run_async(
                 audio_server.push_sentence(
                     wav_bytes,
                     text=sentence,
-                    is_first=is_first,
+                    is_first=first_audio_at is None,
                     sample_rate=tts.sr,
                 ),
                 timeout=15,
@@ -239,11 +334,9 @@ def start_response_listener(
                 first_audio_at = time.time()
 
             total_duration += duration
-            is_first = False
 
-            print(f"[response]   [{idx}/{len(sentences)}] "
-                  f"gen {time.time() - t0:.2f}s, audio {duration:.2f}s: "
-                  f"{sentence[:50]}")
+            print(f"[response]   [{idx}/{total}] "
+                  f"gen {gen_s:.2f}s, audio {duration:.2f}s: {sentence[:50]}")
 
         _run_async(audio_server.end_utterance(), timeout=5)
 

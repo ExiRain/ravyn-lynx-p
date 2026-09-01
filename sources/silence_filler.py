@@ -52,6 +52,7 @@ class SilenceFiller:
             return Signal(
                 source="silence_filler", priority=self.PRIORITY,
                 text=entry["text"], mode="improv", skip_llm=False,
+                ttl=self.settings.SILENCE_SIGNAL_TTL,
                 context={
                     "trigger": "silence_timer",
                     "seed_id": entry.get("id", ""),
@@ -65,6 +66,7 @@ class SilenceFiller:
             return Signal(
                 source="silence_filler", priority=self.PRIORITY,
                 text=entry["text"], mode="quote", skip_llm=True,
+                ttl=self.settings.SILENCE_SIGNAL_TTL,
                 context={"trigger": "silence_timer", "quote_id": entry.get("id", "")},
             )
 
