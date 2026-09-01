@@ -119,6 +119,30 @@ Replies on `ravyn.response` are JSON:
 }
 ```
 
+## Voice gate
+
+Silero VAD on the mic decides when she is allowed to *start*. She is never
+interrupted mid-line — the dispatcher already refuses to send while she is
+busy, and her audio always plays out.
+
+- While you are talking, ordinary signals wait
+- After your last word, `VOICE_HOLD_AFTER_SPEECH` of quiet before she may speak
+- Subs, follows and donations (priority ≤ `VOICE_INTERRUPT_PRIORITY`) cut through
+
+Held signals are checked with `peek()` rather than popped, so they keep their
+place and keep ageing — a game reaction that waits out its TTL expires instead
+of arriving late and out of context.
+
+Her own voice is muted from the gate while she speaks; otherwise it returns
+through the speakers, reads as you, and holds her off indefinitely.
+
+Missing `silero-vad` or `sounddevice` disables the gate with a log line rather
+than stopping her. Pick a mic with `VOICE_INPUT_DEVICE`:
+
+```powershell
+python -c "import sounddevice; print(sounddevice.query_devices())"
+```
+
 ## TTS
 
 Two backends, switched by `TTS_BACKEND`:
@@ -187,6 +211,10 @@ All settings are in `app/settings.py`. Key toggles:
 | `IMPROV_WEIGHT` | 0.6 | Probability of improv vs quote |
 | `TTS_ENABLED` | True | PC TTS on/off (`--no-tts` for silent mode) |
 | `TTS_BACKEND` | `"qwen"` | `qwen` (RU+EN) or `chatterbox` (EN only, fallback) |
+| `VOICE_GATE_ENABLED` | True | Hold her back while you talk (`--no-voice` to disable) |
+| `VOICE_HOLD_AFTER_SPEECH` | 5.0s | Quiet needed after your last word |
+| `VOICE_INTERRUPT_PRIORITY` | 2 | Signals at or below this ignore the gate |
+| `REACTION_CHANCE` | dict | Per-event chance she says anything at all |
 | `TTS_QWEN_REF_TEXT` | `""` | **Required** — transcript of the voice reference wav |
 | `LANG_AMBIENT` | `"en"` | Her idle voice — filler, game, promos |
 | `LANG_REPLY` | `"en"` | How she answers someone: `en`/`ru`/`multilang`/`detect` |

@@ -8,6 +8,7 @@ service — it writes her lines and nothing else.
 Usage:
     python -m app.main                # full stack: orchestrator + TTS
     python -m app.main --no-tts       # silent mode — log her lines, no audio
+    python -m app.main --no-voice     # disable the voice gate (VAD)
     python -m app.main --test         # mock sources
     python -m app.main --no-twitch
     python -m app.main --no-lol
@@ -30,6 +31,7 @@ TEST_MODE = "--test" in sys.argv
 NO_TWITCH = "--no-twitch" in sys.argv
 NO_LOL = "--no-lol" in sys.argv
 NO_TTS = "--no-tts" in sys.argv
+NO_VOICE = "--no-voice" in sys.argv
 
 
 def main():
@@ -59,6 +61,15 @@ def main():
     # the dispatcher to exist before it starts consuming.
     queue = SignalQueue()
     dispatcher = Dispatcher(queue)
+
+    # Voice gate. Built after the dispatcher so is_muted can be its bound
+    # method: her own voice coming back through the speakers would otherwise
+    # read as the streamer talking and hold her off indefinitely.
+    if settings.VOICE_GATE_ENABLED and not NO_VOICE:
+        from sources.voice_gate import VoiceGate
+        dispatcher.voice_gate = VoiceGate(settings, is_muted=dispatcher.is_busy)
+        Thread(target=dispatcher.voice_gate.run,
+               daemon=True, name="voice-gate").start()
 
     # --- Audio pipeline ---
     tts = None
