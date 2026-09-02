@@ -111,6 +111,28 @@ ALLY_DEATH = [
           "score, and right now his line reads better than theirs.",
           lambda s, e: s.deaths + 2 <= e.get("victim_deaths", 99)),
 
+    # These name a specific player. The team totals say who is winning; only
+    # the scoreboard rows say who is doing it, and "Jinx is one and nine" lands
+    # where "your team is behind" does not.
+    Angle("ally_death_worst_offender",
+          "One teammate is having a visibly worse game than the rest, and the "
+          "scoreboard says who. Name that champion and their line. Do not "
+          "generalise it to the whole team — this is about one player.",
+          lambda s, e: (s.worst_ally() is not None
+                        and e.get("victim_champion") == s.worst_ally().champion)),
+
+    Angle("ally_death_to_their_carry",
+          "The enemy who killed them is the one running away with this game. "
+          "Name them and what they are on. Keep it to the fact.",
+          lambda s, e: (s.biggest_threat() is not None
+                        and e.get("killer_champion") == s.biggest_threat().champion)),
+
+    Angle("ally_death_exiled_carrying",
+          "He is outperforming everyone on his own team and this is one more "
+          "of them dying while he does it. Say it as a comparison, using both "
+          "lines from the scoreboard.",
+          lambda s, e: s.carrying()),
+
     Angle("ally_death_bored",
           "You barely care. A bored, offhand one-liner — the verbal "
           "equivalent of not looking up.",
@@ -212,6 +234,17 @@ DRAGON = [
           "unimpressed that this is being announced at all.",
           lambda s, e: len(s.ours.dragons) + len(s.theirs.dragons) <= 1),
 
+    Angle("dragon_one_man_band",
+          "Every drake your team has was taken by the same person. Name them. "
+          "That is not a team stacking objectives, it is one player doing it.",
+          lambda s, e: (len(s.ours.dragons) >= 2
+                        and len(set(s.ours.objective_takers)) == 1)),
+
+    Angle("dragon_he_took_it",
+          "He took this one himself. Credit him specifically, briefly, and do "
+          "not extend it to the team.",
+          lambda s, e: e.get("taker") and e.get("taker") == s.champion),
+
     Angle("dragon_bored",
           "A drake. Thrilling. Offhand, one line, do not look up.",
           _always),
@@ -301,6 +334,12 @@ MY_KILL = [
           "Take the kill, then needle him about his CS — the number is not "
           "flattering and you have been watching it.",
           lambda s, e: s.minutes >= 10 and 0 < s.cs_per_min < 5.5),
+
+    Angle("my_kill_outclassing_team",
+          "His line is better than every one of his teammates'. Say which of "
+          "them he is carrying, by champion and number — the scoreboard is in "
+          "front of you.",
+          lambda s, e: s.carrying() and bool(s.allies)),
 
     Angle("my_kill_clean",
           "Short, clean approval. You do not gush; you note it and move on.",
@@ -492,6 +531,11 @@ GAME_START = [
           "He has told you what he is like in this role. Open on that — his "
           "own assessment, said back to him.",
           lambda s, e: e.get("has_role_note", False)),
+
+    Angle("start_their_threat",
+          "Someone on the enemy team is already ahead of everyone. Name them "
+          "and their line, nothing more.",
+          lambda s, e: s.biggest_threat() is not None),
 
     Angle("start_matchup",
           "The game is starting and you can see both teams. Name what he is "

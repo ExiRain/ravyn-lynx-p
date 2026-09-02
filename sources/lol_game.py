@@ -93,6 +93,7 @@ class LolGameSource:
         self._name_to_champion: dict[str, str] = {}
         self._my_names: set[str] = set()
         self._has_real_enemies = False
+        self._waiting_logged = False
 
         # kill coalescing
         self._kill_buffer: list[str] = []
@@ -161,6 +162,30 @@ class LolGameSource:
                 or self._name_to_champion.get(name.lower())
                 or name)
 
+    def _attribute(self, side: str, killer_name: str) -> tuple[str, str]:
+        """
+        (subject, taker champion) for an objective.
+
+        "Your team took Baron" is the scoreline; "Lee Sin took Baron" is the
+        thing worth saying, and the API gives KillerName on every objective
+        event. Falls back to the side when the killer is a neutral or a name
+        that resolves to nobody, and to nothing at all when the side is not
+        known — she should not assert whose it was if identity failed.
+        """
+        taker = self._champ(killer_name) if killer_name else ""
+        # A champion name is only useful if it IS a champion; objective kills
+        # are sometimes credited to a minion or an unresolvable name.
+        if taker and taker not in self._name_to_champion.values():
+            taker = ""
+
+        if self._is_me(killer_name):
+            return "Exiled", taker
+        if side == "mine":
+            return ("Exiled's teammate " + taker) if taker else "Exiled's team", taker
+        if side == "enemy":
+            return ("The enemy " + taker) if taker else "The enemy", taker
+        return "Someone", taker
+
     def _pick_teammate_name(self) -> str:
         return self._pick_quote("teammates", "names") or "creatures"
 
@@ -183,10 +208,35 @@ class LolGameSource:
     # ---------------------------------------------------------
 
     def _check_for_game(self):
+        """
+        The API answering is NOT the same as a game being ready to read.
+
+        On the loading screen the endpoint responds with an empty
+        `activePlayer` and an empty `allPlayers`. Latching identity from that
+        snapshot poisoned the entire game: with no team, `GameState.update`
+        matched nobody as an ally and swept all ten champions into
+        `enemy_champions`, every kill counted to the enemy, `_is_me` never
+        fired so his own KDA and CS stayed at zero, and `_has_real_enemies`
+        went False, which makes `_classify_killer` call every objective ours.
+
+        That is what "she counts total kills and objectives without splitting
+        who did what" was: with no team there is no split to make. So a game is
+        only accepted once the player list is actually readable.
+        """
         data = self._fetch()
         if data is None:
             return
 
+        if not self._identity_resolves(data):
+            # Loading screen, or a snapshot that arrived half-built. Say so
+            # once and keep polling rather than starting a game we cannot read.
+            if not self._waiting_logged:
+                print("[lol] Game endpoint is up but the player list is not "
+                      "ready yet — waiting before reading anything")
+                self._waiting_logged = True
+            return
+
+        self._waiting_logged = False
         self._game_active = True
         self._game_start_pushed = False
         self._last_event_index = 0
@@ -203,74 +253,118 @@ class LolGameSource:
         self._recent_ally_deaths = []
         self._reaction_log = {}
 
-        active = data.get("activePlayer", {})
-        self._player_riot_id = active.get("riotId", "")
-        self._player_summoner = active.get("summonerName", "")
-        if not self._player_summoner and "#" in self._player_riot_id:
-            self._player_summoner = self._player_riot_id.split("#")[0]
+        self._apply_identity(data)
 
-        self._name_to_team = {}
-        self._name_to_champion = {}
-        enemy_count = 0
-        for p in data.get("allPlayers", []):
-            team = p.get("team", "")
-            summoner = p.get("summonerName", "")
-            riot_id = p.get("riotId", "")
-            champion = p.get("championName", "")
-            for name in [summoner, riot_id, champion]:
-                if name:
-                    self._name_to_team[name] = team
-                    self._name_to_team[name.lower()] = team
-                    if champion:
-                        self._name_to_champion[name] = champion
-                        self._name_to_champion[name.lower()] = champion
-            if "#" in riot_id:
-                short = riot_id.split("#")[0]
-                self._name_to_team[short] = team
-                self._name_to_team[short.lower()] = team
-                if champion:
-                    self._name_to_champion[short] = champion
-                    self._name_to_champion[short.lower()] = champion
-            is_me = (summoner == self._player_summoner
-                     or riot_id == self._player_riot_id
-                     or (self._player_summoner and summoner.lower() == self._player_summoner.lower()))
-            if is_me:
-                self._player_team = team
-                self._player_champion = champion
-            elif team and team != self._player_team:
-                enemy_count += 1
-
-        # recount enemies properly
-        enemy_count = sum(1 for p in data.get("allPlayers", [])
-                         if p.get("team", "") and p.get("team", "") != self._player_team)
-        self._has_real_enemies = enemy_count > 0
-
-        print(f"[lol] Game detected! {self._player_summoner} as {self._player_champion} ({self._player_team})")
-        print(f"[lol]   riotId={self._player_riot_id!r} summonerName={active.get('summonerName', '')!r}")
-        # Lowercase identity set — GameState matches against this rather than
-        # re-deriving the same fragile comparison.
-        self._my_names = {n.lower() for n in
-                          (self._player_summoner, self._player_riot_id,
-                           self._player_champion) if n}
+        print(f"[lol] Game detected! {self._player_summoner} "
+              f"as {self._player_champion} ({self._player_team})")
+        print(f"[lol]   riotId={self._player_riot_id!r} "
+              f"summonerName={data.get('activePlayer', {}).get('summonerName', '')!r}")
 
         # Seed the state from the detection snapshot so the capture below
         # reports the role it actually resolved, not an empty one.
         self.state.update(data, self._player_team, self._my_names)
         self._refresh_read()
 
-        print(f"[lol]   Enemies: {self._has_real_enemies} | Names: {len(self._name_to_team)}")
+        print(f"[lol]   Enemies: {self._has_real_enemies} | "
+              f"Names: {len(self._name_to_team)}")
         self._log_role_ground_truth(data)
-
-        # If identity does not resolve, _is_me() fails and HIS kills and deaths
-        # get routed as ally events — she then talks about him in third person
-        # and reacts to everything. Non-Latin names are the usual cause.
-        if not self._player_summoner and not self._player_riot_id:
-            print("[lol]   WARNING: could not identify the active player — "
-                  "your own kills/deaths will be misrouted as ally events")
-        elif not self._player_champion:
-            print("[lol]   WARNING: active player matched no entry in allPlayers — "
-                  "check whether summonerName/riotId match the allPlayers names")
         self._logged_kill_sample = False
+
+    # ---------------------------------------------------------
+    # identity
+    # ---------------------------------------------------------
+
+    def _identity_resolves(self, data: dict) -> bool:
+        """
+        Can we tell which of these ten players is him, and whose side he is on?
+
+        Everything downstream that splits ours from theirs depends on this, so
+        it is checked up front rather than discovered as nonsense later. Being
+        unable to answer is a reason to wait, never a reason to guess: a wrong
+        team is worse than no game, because it produces confident, wrong
+        commentary instead of silence.
+        """
+        players = data.get("allPlayers") or []
+        if len(players) < 2:
+            return False
+
+        active = data.get("activePlayer") or {}
+        riot_id = active.get("riotId", "") or ""
+        summoner = active.get("summonerName", "") or ""
+        if not riot_id and not summoner:
+            return False
+
+        return self._match_active_player(players, summoner, riot_id) is not None
+
+    @staticmethod
+    def _match_active_player(players: list, summoner: str, riot_id: str) -> dict | None:
+        """
+        Find his row in allPlayers. Kept in one place because the RU account
+        makes this fragile: summonerName is often empty there and riotId is the
+        only handle, so every comparison has to tolerate either being missing.
+        """
+        short = riot_id.split("#")[0] if "#" in riot_id else ""
+        wanted = {n.lower() for n in (summoner, riot_id, short) if n}
+        if not wanted:
+            return None
+
+        for p in players:
+            candidates = {
+                (p.get("summonerName") or "").lower(),
+                (p.get("riotId") or "").lower(),
+            }
+            p_riot = p.get("riotId") or ""
+            if "#" in p_riot:
+                candidates.add(p_riot.split("#")[0].lower())
+            candidates.discard("")
+            if candidates & wanted and p.get("team"):
+                return p
+        return None
+
+    def _apply_identity(self, data: dict) -> None:
+        """Latch who he is. Only ever called on a snapshot that resolves."""
+        active = data.get("activePlayer") or {}
+        self._player_riot_id = active.get("riotId", "") or ""
+        self._player_summoner = active.get("summonerName", "") or ""
+        if not self._player_summoner and "#" in self._player_riot_id:
+            self._player_summoner = self._player_riot_id.split("#")[0]
+
+        players = data.get("allPlayers") or []
+
+        me = self._match_active_player(players, self._player_summoner,
+                                       self._player_riot_id)
+        self._player_team = (me or {}).get("team", "") or ""
+        self._player_champion = (me or {}).get("championName", "") or ""
+
+        self._name_to_team = {}
+        self._name_to_champion = {}
+
+        for p in players:
+            team = p.get("team", "")
+            summoner = p.get("summonerName", "")
+            riot_id = p.get("riotId", "")
+            champion = p.get("championName", "")
+
+            names = [summoner, riot_id, champion]
+            if "#" in riot_id:
+                names.append(riot_id.split("#")[0])
+
+            for name in names:
+                if not name:
+                    continue
+                self._name_to_team[name] = team
+                self._name_to_team[name.lower()] = team
+                if champion:
+                    self._name_to_champion[name] = champion
+                    self._name_to_champion[name.lower()] = champion
+
+        self._has_real_enemies = any(
+            p.get("team") and p.get("team") != self._player_team
+            for p in players)
+
+        self._my_names = {n.lower() for n in
+                          (self._player_summoner, self._player_riot_id,
+                           self._player_champion) if n}
 
     def _has_note_on(self, champion: str) -> bool:
         """Did he write a matchup note about this specific champion?"""
@@ -409,11 +503,13 @@ class LolGameSource:
 
         if name == "HeraldKill":
             side = self._classify_killer(event.get("KillerName", ""))
-            self.state.record_herald(side)
+            subject, taker = self._attribute(side, event.get("KillerName", ""))
+            self.state.record_herald(side, taker)
             seed = self._pick_quote("objectives", "herald_dismiss")
-            whose = "Your team" if side == "mine" else "The enemy"
-            self._push_event("HeraldKill", f"{whose} took Rift Herald. {seed}".strip(),
-                             event, "HeraldKill", extra_context={"side": side})
+            self._push_event("HeraldKill",
+                             f"{subject} took Rift Herald. {seed}".strip(),
+                             event, "HeraldKill",
+                             extra_context={"side": side, "taker": taker})
             return
 
         if name == "TurretKilled":
@@ -491,10 +587,14 @@ class LolGameSource:
             side = self._classify_killer(killer)
             if side == "mine":
                 seed = self._pick_quote("teammates", "ally_kill")
+                killer_champ = self._champ(killer)
+                who = (f"Exiled's teammate {killer_champ}" if killer_champ
+                       else "One of Exiled's teammates")
                 self._push_event("AllyKill",
-                    f"One of Exiled's teammates killed {self._champ(victim)}. {seed}",
+                    f"{who} killed {self._champ(victim)}. {seed}",
                     event, "AllyKill",
-                    extra_context={"victim_champion": self._champ(victim)})
+                    extra_context={"victim_champion": self._champ(victim),
+                                   "killer_champion": killer_champ})
             else:
                 champ = self._champ(victim)
                 self._ally_deaths[champ] = self._ally_deaths.get(champ, 0) + 1
@@ -505,11 +605,15 @@ class LolGameSource:
                 ]
 
                 seed = self._pick_quote("teammates", "ally_death")
+                slayer = self._champ(killer)
+                died = (f"Exiled's teammate {champ} died to {slayer}."
+                        if slayer else f"Exiled's teammate {champ} died.")
                 self._push_event("AllyDeath",
-                    f"Exiled's teammate {champ} died. {seed}",
+                    f"{died} {seed}",
                     event, "AllyDeath",
                     extra_context={
                         "victim_champion": champ,
+                        "killer_champion": self._champ(killer),
                         # how many times THIS champion has died, and how many
                         # allies have died in the last half minute — the two
                         # facts that make "again" and "bleeding" honest
@@ -604,7 +708,8 @@ class LolGameSource:
         assisters = event.get("Assisters", [])
         side = self._classify_killer(killer)
         i_was_involved = self._is_me(killer) or any(self._is_me(a) for a in assisters)
-        self.state.record_baron(side)
+        subject, taker = self._attribute(side, killer)
+        self.state.record_baron(side, taker)
 
         if stolen:
             if side == "mine":
@@ -619,10 +724,10 @@ class LolGameSource:
         else:
             seed = self._pick_quote("objectives", "baron_enemy")
 
-        whose = "Your team" if side == "mine" else "The enemy"
-        self._push_event("BaronKill", f"{whose} took Baron. {seed}".strip(),
+        self._push_event("BaronKill", f"{subject} took Baron. {seed}".strip(),
                          event, "BaronKill",
-                         extra_context={"side": side, "stolen": stolen})
+                         extra_context={"side": side, "stolen": stolen,
+                                        "taker": taker})
 
     # ---------------------------------------------------------
     # dragon
@@ -635,14 +740,13 @@ class LolGameSource:
         # Counted before the reaction chance is rolled: the tally is state, not
         # commentary. Skipping the count when she happens not to speak would
         # leave her asserting a drake score that never happened.
-        self.state.record_dragon(side, dragon_type)
+        subject, taker = self._attribute(side, event.get("KillerName", ""))
+        self.state.record_dragon(side, dragon_type, taker)
 
         seed = self._pick_quote("objectives", "dragon_dismiss")
-        whose = "Your team" if side == "mine" else "The enemy"
-        text = (f"{whose} took the {dragon_type} dragon. {seed}"
-                if seed else f"{whose} took the {dragon_type} dragon.")
+        text = f"{subject} took the {dragon_type} dragon. {seed}".strip()
         self._push_event("DragonKill", text, event, "DragonKill",
-                         extra_context={"side": side})
+                         extra_context={"side": side, "taker": taker})
 
     # ---------------------------------------------------------
     # structures
@@ -721,6 +825,11 @@ class LolGameSource:
                 team = "ORDER"
             elif "t200" in lower or "chaos" in lower:
                 team = "CHAOS"
+        if not self._player_team:
+            # No identity, no sides. "mine" here is what made every objective
+            # count as ours; "enemy" would be the same mistake mirrored.
+            return "unknown"
+
         if team == self._player_team:
             return "mine"
         elif team:

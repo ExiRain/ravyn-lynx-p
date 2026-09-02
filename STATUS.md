@@ -127,6 +127,9 @@ silent quote-mode.
 
 ### Bugs found and fixed, worth not reintroducing
 
+- **Game accepted from a loading-screen snapshot** → empty identity latched for
+  the whole match, all ten champions read as the enemy team, every objective
+  counted as his. See §7 "Identity"
 - Notebook and PC both spoke → she said everything twice
 - `skip_llm` quotes never reached the PC (publish was inside the `else:`)
 - IDLE fired before the PC had synthesised → signals dispatched over her voice
@@ -148,6 +151,8 @@ Two committed suites, both standalone (no pytest, no network):
 - `python tests/test_champion_notes.py` — 42 checks: lookup, off-role, how
   confidently a lane is claimed, labelling, and that note angles stay silent
   when nothing is written
+- `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
+  riotId matching, and that nothing guesses a side it does not know
 
 Eleven older suites are still in the scratchpad (not committed — worth moving
 into the repos). They stub TTS, CUDA, RabbitMQ and Godot, so they verify logic,
@@ -365,6 +370,40 @@ looks exactly like "she talks about me in third person and reacts to
 everything". `7124ebd` logs identity resolution and the first kill event's raw
 names so this is visible instead of guessed.
 
+**The endpoint answering is not the same as a game being readable.** This bit
+live, first run:
+
+```
+[lol] Game detected!  as ()
+[lol]   riotId='' summonerName=''      Enemies: False | Names: 0
+```
+
+On the loading screen the API responds with an empty `activePlayer` and an
+empty `allPlayers`, and `_game_active` used to be set unconditionally on any
+response. The empty identity then latched for the whole match, and every split
+between "ours" and "theirs" broke at once — silently, and confidently:
+
+| Because | She then |
+|---|---|
+| `_player_team` empty, so `team == my_team` matched nobody | swept **all ten** champions into `enemy_champions` and opened on the "chaotic mix these apes have assembled" |
+| every player fell through to `elif team:` | counted every kill in the game to the enemy |
+| `_my_names` empty, so `_is_me` never fired | reported his own line as 0/0/0 |
+| `_has_real_enemies` False → `_classify_killer` returns `"mine"` | counted **every objective in the game** as his team's |
+
+That last row is what "she counts total kills and objectives without splitting
+who did what" was: with no team there is no split to make.
+
+A game is now accepted only once `_identity_resolves()` says the player list is
+readable — two or more players, an `activePlayer` with a name, and that name
+matching a row that has a team. Until then it logs once and keeps polling.
+Defence in depth behind that: `GameState.update` returns early rather than
+classify sides without a team, `_classify_killer` returns `"unknown"` instead of
+falling back to `"mine"`, and `record_*` files an unknown side **nowhere**.
+
+The rule, and it is the same one as §7's opening: **being unable to answer is a
+reason to wait, never a reason to guess.** A wrong team does not produce a
+missing line, it produces a confident wrong one.
+
 ### Role detection
 
 The `position` field is unreliable — frequently empty. Summoner spells only
@@ -422,7 +461,7 @@ Now:
 
 | Piece | File | What it does |
 |---|---|---|
-| **Measured state** | `orchestrator/game_state.py` | Keeps the poll: minute and phase, his champion/role/level/KDA/CS (and CS rank across all ten), team kill totals, drake–baron–herald–tower–inhibitor counts per side, soul point, both team comps |
+| **Measured state** | `orchestrator/game_state.py` | Keeps the poll: minute and phase, his champion/role/level/KDA/CS (and CS rank across all ten), team kill totals, drake–baron–herald–tower–inhibitor counts per side, soul point, **and every player's scoreboard row** |
 | **Angles** | `orchestrator/game_angles.py` | ~93 instructions across 15 event types. Each fires only when its facts are true, and the least recently used one wins |
 | **Burst decay** | `REACTION_DECAY`, `REACTION_WINDOW` | Each reaction of the same kind inside 90 game-seconds multiplies the next one's chance by 0.55, so one teamfight is one comment |
 | **Mood** | `GameState.mood()` | Kill lead, objective lead and his own line → [-1, 1], fed as `mood_spike`. Her face used to be flat until a fifth death |
@@ -440,6 +479,23 @@ back, which is the original bug in miniature. So every event type carries at
 least `MIN_UNCONDITIONAL` (3) angles that are *registers* rather than reads —
 the same fact deadpan, clipped, or with a sigh is honest whatever the score.
 `tests/test_game_variety.py` enforces this.
+
+**Who did what, not just which side.** Team totals answer "who is winning";
+they cannot answer "who is doing it", and that was the second half of the same
+complaint. The situation block now carries every player's line —
+
+```
+  His team:   LeeSin 3/4/8, Orianna 2/5/4, Jinx 1/9/2, Thresh 0/7/11.
+  Enemy team: Darius 11/2/4, Elise 5/3/9, Syndra 4/4/6, Caitlyn 6/3/5, ...
+```
+
+— so "Jinx is one and nine" and "Darius is eleven and two" are available where
+only "your team is behind" was before. `worst_ally()`, `best_ally()`,
+`biggest_threat()` and `carrying()` derive from those rows and drive angles that
+name one player rather than the team. Objectives record **who took them**, so
+`dragon_one_man_band` can say all three drakes were the same jungler, and every
+objective event names its taker ("Exiled's teammate LeeSin took the Infernal
+dragon") instead of "Your team took".
 
 Measured on a simulated 34-minute losing game: **13 distinct angles across 14
 signals**, ally-death comments down from ~15 to ~7.
