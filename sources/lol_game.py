@@ -6,6 +6,12 @@ League of Legends Live Game source.
 - Kill coalescing with quote seeds from pools
 - Death tracking per game with trade detection
 - Completely disables silence filler during games
+
+Every event carries the measured game state (`orchestrator/game_state.py`) and
+an angle chosen from it (`orchestrator/game_angles.py`). Before that, the poll
+was thrown away and each event reached the notebook as champion name plus a
+seed, so fifteen ally deaths a game produced fifteen near-identical prompts.
+See STATUS.md §7.
 """
 
 from __future__ import annotations
@@ -17,6 +23,8 @@ import requests
 import urllib3
 from pathlib import Path
 
+from orchestrator.game_angles import AngleChooser
+from orchestrator.game_state import GameState
 from orchestrator.models import Signal
 from orchestrator.priority_queue import SignalQueue
 from app.settings import get_settings
@@ -34,6 +42,11 @@ STALE_THRESHOLD = 10.0       # seconds in game time — older events dropped at 
 
 TEAMFIGHT_WINDOW = 8.0
 TEAMFIGHT_MIN_KILLS = 3
+
+# Game seconds. Ally deaths inside this window count as one bleed rather than
+# separate events — it is what lets her say "that is the third one" instead of
+# saying "typical" three times.
+ALLY_DEATH_BURST_WINDOW = 30.0
 
 MULTIKILL_NAMES = {2: "double", 3: "triple", 4: "quadra", 5: "penta"}
 
@@ -77,6 +90,7 @@ class LolGameSource:
         # summoner/riot id -> champion. Ravyn says "Zed", not "xX_Slayer_69_Xx":
         # summoner names are unpronounceable and TTS reads them character soup.
         self._name_to_champion: dict[str, str] = {}
+        self._my_names: set[str] = set()
         self._has_real_enemies = False
 
         # kill coalescing
@@ -91,6 +105,18 @@ class LolGameSource:
 
         # teamfight tracking
         self._recent_kills: list[dict] = []
+
+        # measured state + the angle picked from it
+        self.state = GameState()
+        self.angles = AngleChooser()
+
+        # deaths per ally champion, so "that one again" is a fact and not a
+        # guess, and recent ally deaths for burst detection
+        self._ally_deaths: dict[str, int] = {}
+        self._recent_ally_deaths: list[float] = []
+
+        # game-time stamps of each reaction, per event type, for burst decay
+        self._reaction_log: dict[str, list[float]] = {}
 
         # load quotes
         self._quotes = self._load_quotes(data_dir / "game_quotes.json")
@@ -164,6 +190,12 @@ class LolGameSource:
         self._kills_since_last_death = 0
         self._assists_since_last_death = 0
 
+        self.state = GameState()
+        self.angles.reset()
+        self._ally_deaths = {}
+        self._recent_ally_deaths = []
+        self._reaction_log = {}
+
         active = data.get("activePlayer", {})
         self._player_riot_id = active.get("riotId", "")
         self._player_summoner = active.get("summonerName", "")
@@ -208,7 +240,18 @@ class LolGameSource:
 
         print(f"[lol] Game detected! {self._player_summoner} as {self._player_champion} ({self._player_team})")
         print(f"[lol]   riotId={self._player_riot_id!r} summonerName={active.get('summonerName', '')!r}")
+        # Lowercase identity set — GameState matches against this rather than
+        # re-deriving the same fragile comparison.
+        self._my_names = {n.lower() for n in
+                          (self._player_summoner, self._player_riot_id,
+                           self._player_champion) if n}
+
+        # Seed the state from the detection snapshot so the capture below
+        # reports the role it actually resolved, not an empty one.
+        self.state.update(data, self._player_team, self._my_names)
+
         print(f"[lol]   Enemies: {self._has_real_enemies} | Names: {len(self._name_to_team)}")
+        self._log_role_ground_truth(data)
 
         # If identity does not resolve, _is_me() fails and HIS kills and deaths
         # get routed as ally events — she then talks about him in third person
@@ -220,6 +263,39 @@ class LolGameSource:
             print("[lol]   WARNING: active player matched no entry in allPlayers — "
                   "check whether summonerName/riotId match the allPlayers names")
         self._logged_kill_sample = False
+
+    def _log_role_ground_truth(self, data: dict) -> None:
+        """
+        Print what the API actually says about roles, once per game.
+
+        STATUS.md §7 wants role detection from the 2026 quest items and is
+        emphatic that the item names must not be written from memory — that is
+        precisely the mistake the section exists to prevent. So this captures
+        the ground truth instead of guessing at it: one game of this in the log
+        gives the real `position` values, the real summoner spell fields, and
+        the real item names on all ten players, which is what unblocks writing
+        the detector properly.
+
+        Cheap, once per game, and it self-documents when a patch moves things.
+        """
+        try:
+            for p in data.get("allPlayers", []) or []:
+                champ = p.get("championName", "?")
+                position = p.get("position", "")
+                spells = p.get("summonerSpells", {}) or {}
+                spell_names = [
+                    v.get("displayName") or v.get("rawDisplayName") or "?"
+                    for v in spells.values() if isinstance(v, dict)
+                ]
+                items = [i.get("displayName") or str(i.get("itemID", "?"))
+                         for i in (p.get("items", []) or [])]
+                print(f"[lol][roles] {champ:14} position={position!r:12} "
+                      f"spells={spell_names} items={items}")
+            print(f"[lol][roles] resolved role for Exiled: "
+                  f"{self.state.position or 'unknown'!r}")
+        except Exception as e:
+            # Diagnostics must never take the game source down with them.
+            print(f"[lol][roles] capture failed: {e}")
 
     # ---------------------------------------------------------
     # polling
@@ -234,6 +310,7 @@ class LolGameSource:
             return
 
         self._current_game_time = data.get("gameData", {}).get("gameTime", 0)
+        self.state.update(data, self._player_team, self._my_names)
 
         # delayed game start
         if not self._game_start_pushed and self._current_game_time > 3.0:
@@ -297,17 +374,24 @@ class LolGameSource:
 
         if name == "HeraldKill":
             side = self._classify_killer(event.get("KillerName", ""))
+            self.state.record_herald(side)
             seed = self._pick_quote("objectives", "herald_dismiss")
-            self._push_event("HeraldKill", seed or "Herald taken.", event, "HeraldKill")
+            whose = "Your team" if side == "mine" else "The enemy"
+            self._push_event("HeraldKill", f"{whose} took Rift Herald. {seed}".strip(),
+                             event, "HeraldKill", extra_context={"side": side})
             return
 
         if name == "TurretKilled":
-            # turrets are very low priority — only react if I did it
+            # Every turret is COUNTED — the map state is what makes her later
+            # lines specific. She still only speaks about the ones he took;
+            # ten "a tower fell" reactions a game is the noise we are removing.
             killer = event.get("KillerName", "")
+            side = self._classify_killer(killer)
+            self.state.record_turret(side)
             if self._is_me(killer):
                 self._push_event("TurretKilled",
-                    "You destroyed a turret.", event, "TurretKilled")
-            # silently ignore all other turret events
+                    "You destroyed a turret.", event, "TurretKilled",
+                    extra_context={"side": side})
             return
 
         if name == "InhibKilled":
@@ -320,7 +404,9 @@ class LolGameSource:
                 seed = self._pick_quote("ace", "our_ace")
             else:
                 seed = self._pick_quote("ace", "their_ace")
-            self._push_event("Ace", seed or "Ace!", event, "Ace")
+            self._push_event("Ace", seed or "Ace!", event, "Ace",
+                             extra_context={"side": "mine" if acer == self._player_team
+                                                    else "enemy"})
 
     # ---------------------------------------------------------
     # kills — buffered
@@ -361,19 +447,40 @@ class LolGameSource:
             self._assists_since_last_death += 1
 
         else:
+            # The collective slang ("creatures", "these apes") is HER
+            # vocabulary and comes from the persona, not from the event text.
+            # Splicing the names pool into a possessive sentence produced
+            # "Your those things on team LeeSin died" — broken English handed
+            # straight to the model, which then had to repair it before it
+            # could be funny.
             side = self._classify_killer(killer)
-            teammate_name = self._pick_teammate_name()
             if side == "mine":
                 seed = self._pick_quote("teammates", "ally_kill")
                 self._push_event("AllyKill",
-                    f"One of {teammate_name} killed {self._champ(victim)}. {seed}",
-                    event, "AllyKill")
+                    f"One of Exiled's teammates killed {self._champ(victim)}. {seed}",
+                    event, "AllyKill",
+                    extra_context={"victim_champion": self._champ(victim)})
             else:
+                champ = self._champ(victim)
+                self._ally_deaths[champ] = self._ally_deaths.get(champ, 0) + 1
+                self._recent_ally_deaths.append(self._current_game_time)
+                self._recent_ally_deaths = [
+                    t for t in self._recent_ally_deaths
+                    if self._current_game_time - t <= ALLY_DEATH_BURST_WINDOW
+                ]
+
                 seed = self._pick_quote("teammates", "ally_death")
                 self._push_event("AllyDeath",
-                    f"Your {teammate_name.replace('your ', '')} "
-                    f"{self._champ(victim)} died. {seed}",
-                    event, "AllyDeath")
+                    f"Exiled's teammate {champ} died. {seed}",
+                    event, "AllyDeath",
+                    extra_context={
+                        "victim_champion": champ,
+                        # how many times THIS champion has died, and how many
+                        # allies have died in the last half minute — the two
+                        # facts that make "again" and "bleeding" honest
+                        "victim_deaths": self._ally_deaths[champ],
+                        "recent_ally_deaths": len(self._recent_ally_deaths),
+                    })
 
     def _flush_kills(self):
         count = len(self._kill_buffer)
@@ -452,6 +559,7 @@ class LolGameSource:
         assisters = event.get("Assisters", [])
         side = self._classify_killer(killer)
         i_was_involved = self._is_me(killer) or any(self._is_me(a) for a in assisters)
+        self.state.record_baron(side)
 
         if stolen:
             if side == "mine":
@@ -466,7 +574,10 @@ class LolGameSource:
         else:
             seed = self._pick_quote("objectives", "baron_enemy")
 
-        self._push_event("BaronKill", seed or "Baron.", event, "BaronKill")
+        whose = "Your team" if side == "mine" else "The enemy"
+        self._push_event("BaronKill", f"{whose} took Baron. {seed}".strip(),
+                         event, "BaronKill",
+                         extra_context={"side": side, "stolen": stolen})
 
     # ---------------------------------------------------------
     # dragon
@@ -474,10 +585,19 @@ class LolGameSource:
 
     def _handle_dragon(self, event: dict):
         dragon_type = event.get("DragonType", "Unknown")
-        stolen = event.get("Stolen", False) and self._has_real_enemies
+        side = self._classify_killer(event.get("KillerName", ""))
+
+        # Counted before the reaction chance is rolled: the tally is state, not
+        # commentary. Skipping the count when she happens not to speak would
+        # leave her asserting a drake score that never happened.
+        self.state.record_dragon(side, dragon_type)
+
         seed = self._pick_quote("objectives", "dragon_dismiss")
-        text = f"{dragon_type} dragon. {seed}" if seed else f"{dragon_type} dragon down."
-        self._push_event("DragonKill", text, event, "DragonKill")
+        whose = "Your team" if side == "mine" else "The enemy"
+        text = (f"{whose} took the {dragon_type} dragon. {seed}"
+                if seed else f"{whose} took the {dragon_type} dragon.")
+        self._push_event("DragonKill", text, event, "DragonKill",
+                         extra_context={"side": side})
 
     # ---------------------------------------------------------
     # structures
@@ -487,6 +607,8 @@ class LolGameSource:
         killer = event.get("KillerName", "")
         side = self._classify_killer(killer)
         i_did_it = self._is_me(killer)
+        if struct_name == "inhibitor":
+            self.state.record_inhibitor(side)
         teammate_name = self._pick_teammate_name()
 
         if side == "mine" or not self._has_real_enemies:
@@ -565,13 +687,35 @@ class LolGameSource:
     # push
     # ---------------------------------------------------------
 
+    def _reaction_chance(self, config_key: str, event_type: str) -> float:
+        """
+        Base chance, decayed by how often she has just reacted to this kind of
+        thing.
+
+        The base rates were never the problem on their own — five ally deaths
+        in one teamfight were five independent rolls at 0.6, so she commented
+        on the same thirty seconds three times. Each recent reaction of the
+        same kind multiplies the next one's chance, and the counter decays, so
+        an isolated event later in the game still lands at full rate.
+        """
+        base = settings.REACTION_CHANCE.get(
+            config_key, settings.REACTION_CHANCE.get(event_type, 1.0))
+
+        now = self._current_game_time
+        recent = [t for t in self._reaction_log.get(config_key, [])
+                  if now - t <= settings.REACTION_WINDOW]
+        self._reaction_log[config_key] = recent
+
+        return base * (settings.REACTION_DECAY ** len(recent))
+
     def _push_event(self, config_key: str, text: str, raw_event: dict,
                     event_type: str, extra_context: dict = None):
-        chance = settings.REACTION_CHANCE.get(
-            config_key, settings.REACTION_CHANCE.get(event_type, 1.0))
+        chance = self._reaction_chance(config_key, event_type)
         if chance < 1.0 and random.random() > chance:
-            print(f"[lol] {config_key}: skipped (reaction chance {chance})")
+            print(f"[lol] {config_key}: skipped (chance {chance:.2f})")
             return
+
+        self._reaction_log.setdefault(config_key, []).append(self._current_game_time)
 
         config = EVENT_CONFIG.get(config_key, EVENT_CONFIG.get(event_type, {"priority": 5, "ttl": 15}))
         ctx = {
@@ -584,6 +728,24 @@ class LolGameSource:
         if extra_context:
             ctx.update(extra_context)
 
+        # The two fields that make one ally death different from the last:
+        # what is actually true in the game right now, and a direction chosen
+        # from it that she has not just been given. See STATUS.md §7.
+        situation = self.state.render()
+        if situation:
+            ctx["situation"] = situation
+
+        angle = self.angles.choose(event_type, self.state, ctx)
+        if angle is not None:
+            ctx["angle"] = angle.instruction
+            ctx["angle_id"] = angle.id
+
+        # Her face should reflect how the game is going, not sit flat until a
+        # fifth death. The worker only applies mood_spike when the LLM did not
+        # return a mood of its own, so an explicit one (the death roast) still
+        # wins — this fills the silence in between.
+        ctx.setdefault("mood_spike", self.state.mood())
+
         signal = Signal(
             source="game",
             priority=config["priority"],
@@ -594,7 +756,8 @@ class LolGameSource:
             context=ctx,
         )
         self.queue.push(signal)
-        print(f"[lol] {config_key}: {text[:70]}")
+        angle_note = f"  [{ctx['angle_id']}]" if "angle_id" in ctx else ""
+        print(f"[lol] {config_key}: {text[:70]}{angle_note}")
 
     def _fetch(self) -> dict | None:
         try:

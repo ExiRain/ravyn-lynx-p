@@ -75,14 +75,29 @@ class Settings:
     # lol_game._handle_death already coin-flips deaths 1-4, so a second roll
     # here would silence her twice over.
     REACTION_CHANCE = {
-        "AllyDeath":     0.6,
-        "AllyKill":      0.35,
+        # Ally deaths were the single loudest thing she did: 0.6 over roughly
+        # twenty-five deaths in a losing game is fifteen comments about other
+        # people dying. Halved, and then burst-decayed below.
+        "AllyDeath":     0.3,
+        "AllyKill":      0.25,
         "TurretKilled":  0.3,
         "HeraldKill":    0.5,
         "DragonKill":    0.7,
         "MyKill":        0.8,
         "InhibKilled":   0.9,
     }
+
+    # Bursts are the real repetition problem, not the base rate. Five ally
+    # deaths in one teamfight used to be five rolls at 0.6 — three comments
+    # about the same thirty seconds. Each reaction of the SAME kind inside
+    # REACTION_WINDOW (game seconds) multiplies the next one's chance by
+    # REACTION_DECAY, so she reacts to the first, maybe the second, and lets
+    # the rest go. The counter is per event type and decays on its own, so an
+    # isolated ally death ten minutes later still lands at the full rate.
+    #
+    # At 0.6 base: 0.60, 0.33, 0.18, 0.10 ...
+    REACTION_DECAY = 0.55
+    REACTION_WINDOW = 90.0
 
     # --- Twitch ---
     TWITCH_CHANNEL = "exiledra1n"
