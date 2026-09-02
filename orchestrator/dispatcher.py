@@ -30,6 +30,7 @@ class Dispatcher:
         self._last_hold_log = 0.0
         self.busy = False
         self._busy_since = 0.0
+        self._inflight: Signal | None = None
         self._busy_lock = threading.Lock()
         self._on_dispatch_callbacks: list = []
         self._running = True
@@ -42,6 +43,24 @@ class Dispatcher:
         with self._busy_lock:
             self.busy = state
             self._busy_since = time.time() if state else 0.0
+            if not state:
+                self._inflight = None
+
+    def set_inflight(self, signal: Signal | None) -> None:
+        with self._busy_lock:
+            self._inflight = signal
+
+    def inflight_priority(self) -> int:
+        """
+        Priority of the signal currently being generated, for the second gate
+        check in the response listener. Exactly one signal is in flight at a
+        time — the busy flag guarantees it — so this needs no request-protocol
+        change to carry the priority to the notebook and back.
+
+        Defaults to "ordinary, gate applies" if nothing is recorded.
+        """
+        with self._busy_lock:
+            return self._inflight.priority if self._inflight else 5
 
     def is_busy(self) -> bool:
         """
@@ -59,6 +78,7 @@ class Dispatcher:
                       f"clearing (lost message?)")
                 self.busy = False
                 self._busy_since = 0.0
+                self._inflight = None
                 return False
 
             return True
@@ -110,6 +130,13 @@ class Dispatcher:
         """
         True if this signal must wait because the streamer is talking.
 
+        This is the *first* of two gate checks and the weaker one. All it buys
+        is not paying an LLM round trip and a TTS pass for a line she will not
+        be allowed to say. By the time that line exists, seconds have gone by
+        and this answer is stale, so the decision that actually keeps her off
+        your voice is the one in services/response_listener.py, taken with the
+        audio already in hand.
+
         Checked against the queue head before popping, so a held signal keeps
         its place and its TTL keeps running — a game reaction that waits out
         its window expires instead of arriving late and out of context.
@@ -124,10 +151,13 @@ class Dispatcher:
         if not self.voice_gate.should_hold():
             return False
 
-        now = time.time()
-        if now - self._last_hold_log > 3.0:
-            self._last_hold_log = now
-            print(f"[dispatcher] Holding {signal.source} — you are talking")
+        # Ambient gets its own "dropping" line from the caller — logging a
+        # hold for something that is about to be discarded reads as a bug.
+        if signal.priority < self.settings.VOICE_AMBIENT_PRIORITY:
+            now = time.time()
+            if now - self._last_hold_log > 3.0:
+                self._last_hold_log = now
+                print(f"[dispatcher] Holding {signal.source} — you are talking")
 
         return True
 
@@ -193,6 +223,20 @@ class Dispatcher:
                 # its place in the queue and carries on ageing out
                 head = self.queue.peek()
                 if head is not None and self._gate_holds(head):
+
+                    # Ambient chatter is discarded, not deferred. It exists to
+                    # fill silence; while you are talking there is no silence
+                    # to fill, and delivering it the moment you stop is the
+                    # worst of both — she interrupts the pause after your
+                    # thought with a remark about nothing. The filler offers
+                    # another one on its own timer soon enough.
+                    if head.priority >= s.VOICE_AMBIENT_PRIORITY:
+                        dropped = self.queue.pop_head_if(head)
+                        if dropped is not None:
+                            print(f"[dispatcher] Dropping {dropped.source} "
+                                  f"(ambient) — you are talking")
+                            continue    # look at the new head straight away
+
                     try:
                         connection.sleep(s.DISPATCH_POLL_INTERVAL)
                     except Exception:
@@ -211,6 +255,7 @@ class Dispatcher:
 
                 # set busy before publishing to prevent double-dispatch
                 self.set_busy(True)
+                self.set_inflight(signal)
 
                 try:
                     self._dispatch(signal, channel)

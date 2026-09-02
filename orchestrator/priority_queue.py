@@ -39,6 +39,21 @@ class SignalQueue:
                 return self._heap[0][2]
             return None
 
+    def pop_head_if(self, signal: Signal) -> Signal | None:
+        """
+        Pop the head only if it is still this exact signal.
+
+        The dispatcher peeks, decides, and then acts, and a source can push
+        between those two steps. Without the identity check a "drop the
+        ambient chatter he is talking over" decision could pop whatever
+        arrived in the meantime instead.
+        """
+        with self._lock:
+            self._drain_expired()
+            if self._heap and self._heap[0][2] is signal:
+                return heapq.heappop(self._heap)[2]
+            return None
+
     def is_empty(self) -> bool:
         with self._lock:
             self._drain_expired()

@@ -136,8 +136,13 @@ silent quote-mode.
 
 ### Tests
 
-Eleven suites in the scratchpad (not committed — worth moving into the repos).
-They stub TTS, CUDA, RabbitMQ and Godot, so they verify logic, not reality.
+`tests/test_voice_gate.py` is committed and runs standalone
+(`python tests/test_voice_gate.py`) — 34 checks over the gate, the mute window
+and the dispatch policy.
+
+Eleven older suites are still in the scratchpad (not committed — worth moving
+into the repos). They stub TTS, CUDA, RabbitMQ and Godot, so they verify logic,
+not reality.
 
 ---
 
@@ -180,14 +185,78 @@ Silero VAD decides when she may *start*. She is never interrupted mid-line.
 - `VOICE_HOLD_AFTER_SPEECH` (5s) of quiet after your last word
 - Priority ≤ `VOICE_INTERRUPT_PRIORITY` (2) cuts through — subs, follows, donations
 
-Held signals are checked with `peek()`, not popped, so they keep ageing: a game
-reaction that waits out its TTL expires rather than arriving late.
-
-Hysteresis, not a bare threshold: ~96ms to believe speech started, ~480ms to
+Hysteresis, not a bare threshold: ~96ms to believe speech started, ~800ms to
 believe it stopped, so the pause between two words is not read as you finishing.
 
-The gate ignores the mic while she speaks — otherwise her voice returns through
-the speakers, reads as you, and holds her off indefinitely.
+### Why the first version felt wrong
+
+It held at the wrong moment and went deaf at the wrong moment. Two bugs, one
+symptom — "the delay doesn't behave like a delay".
+
+**The gate was asked once, at dispatch, and never again.** Between that check
+and her first syllable sit an LLM round trip and a TTS pass — 3 to 6 seconds.
+Start talking anywhere inside that window and the gate had already said yes.
+She spoke straight over you, and the log showed a hold that had plainly done
+nothing.
+
+**The mic was deaf for that whole window.** `is_muted` was wired to
+`dispatcher.is_busy`, and busy is set the instant a request is published. So
+the VAD ignored every frame from publish until playback ended, silent seconds
+included. It never saw you start; `_last_speech_at` never updated; when her
+line ended the hold was measured against a word from before it and had long
+since expired, so the next signal fired immediately — still over you.
+
+### How it works now
+
+**Two checks, and the second one decides.**
+
+| | Where | What it buys |
+|---|---|---|
+| 1 | `dispatcher._gate_holds`, on the queue head | Not paying for an LLM round trip and a TTS pass for a line she will not be allowed to say. Advisory only. |
+| 2 | `response_listener._wait_for_gate`, after the opening chunk is synthesised | The real decision. |
+
+The order in check 2 matters: **synthesise first, then ask.** The audio is in
+hand, so waiting is nearly free and she speaks the instant you stop, instead of
+starting a cold pipeline and arriving three seconds into your next sentence. A
+line waits up to `VOICE_MAX_DEFER` (8s) and is then **dropped**, not said late —
+by then the game event is over and the chat message has scrolled. Her staying
+quiet reads as her letting it go; her raising it eight seconds later reads as a
+bug. Nothing reaches Godot until the check passes, so the avatar never visibly
+gears up and then says nothing.
+
+**Muted only while audible.** `VoiceGate.set_muted()` is driven by the response
+listener around actual playback, plus `VOICE_MUTE_TAIL` (0.35s) for
+speaker-to-mic latency. The mic is live through generation, which is precisely
+when you are most likely to start talking. It is wrapped in `try/finally` and
+backed by `MUTE_SAFETY_TIMEOUT` (120s) — a leaked mute means a deaf mic for the
+rest of the stream, which looks exactly like a broken gate.
+
+**Ambient chatter is dropped, not deferred.** At or above
+`VOICE_AMBIENT_PRIORITY` (8) a held signal is discarded at the queue head rather
+than queued. `silence_filler` is priority 10: it exists to fill silence, and
+while you are talking there is no silence to fill. Delivering it the moment you
+stop is the worst outcome — she interrupts the pause after your thought with a
+remark about nothing. The filler offers another on its own timer. Belt and
+braces, those signals now also carry `SILENCE_SIGNAL_TTL` (60s) for the case
+where she was merely busy speaking.
+
+Everything below that line still waits with `peek()`, not `pop()`, so it keeps
+ageing: a game reaction that waits out its TTL expires rather than arriving
+late.
+
+`FRAMES_TO_STOP` went 15 → 25 (~480ms → ~800ms). 480ms cleared on ordinary
+pauses between phrases, so one sentence logged "you are talking / you stopped"
+three or four times — visible in the screenshots — and the hold kept re-arming
+from the middle of your thought. It also lengthens the effective hold by its own
+duration, since the stop edge is what stamps `_last_speech_at`.
+
+**Tune by ear, in this order:** `VOICE_HOLD_AFTER_SPEECH` if she cuts into your
+pauses; `FRAMES_TO_STOP` if the log flip-flops mid-sentence; `VOICE_MAX_DEFER`
+if she drops lines you wanted; `VOICE_AMBIENT_PRIORITY` if the wrong things are
+being discarded.
+
+`python tests/test_voice_gate.py` covers all of it with Silero, Rabbit, TTS and
+Godot stubbed — it verifies decisions, not audio.
 
 ---
 
@@ -339,7 +408,7 @@ champion tags are facts about the game. Different lifecycles.
 - `ravyn-nb` has no PR
 
 **Small**
-- Move the eleven test suites out of the scratchpad into the repos
+- Move the eleven older test suites out of the scratchpad into the repos
 - Stray submodule in `ravyn-nb` (gitlink at `ravyn-nb/`, no `.gitmodules`)
 - `quote` signals round-trip to the notebook just to be handed back — they could
   short-circuit locally, which would let her speak with the notebook powered off

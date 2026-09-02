@@ -62,12 +62,12 @@ def main():
     queue = SignalQueue()
     dispatcher = Dispatcher(queue)
 
-    # Voice gate. Built after the dispatcher so is_muted can be its bound
-    # method: her own voice coming back through the speakers would otherwise
-    # read as the streamer talking and hold her off indefinitely.
+    # Voice gate. The response listener drives its mute around actual
+    # playback and asks it again, with her line already synthesised, before
+    # any of it is sent to Godot — see services/response_listener.py.
     if settings.VOICE_GATE_ENABLED and not NO_VOICE:
         from sources.voice_gate import VoiceGate
-        dispatcher.voice_gate = VoiceGate(settings, is_muted=dispatcher.is_busy)
+        dispatcher.voice_gate = VoiceGate(settings)
         Thread(target=dispatcher.voice_gate.run,
                daemon=True, name="voice-gate").start()
 
@@ -100,7 +100,11 @@ def main():
     Thread(
         target=start_response_listener,
         args=(tts,),
-        kwargs={"on_complete": lambda: dispatcher.set_busy(False)},
+        kwargs={
+            "on_complete": lambda: dispatcher.set_busy(False),
+            "voice_gate": dispatcher.voice_gate,
+            "get_priority": dispatcher.inflight_priority,
+        },
         daemon=True,
         name="response-listener",
     ).start()

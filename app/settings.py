@@ -29,6 +29,12 @@ class Settings:
     QUOTE_ENABLED = True
     IMPROV_WEIGHT = 0.6
 
+    # An idle thought that could not be said within a minute of being thought
+    # is answering a silence that is over. Expire it rather than deliver it
+    # once she is free — the gate already drops these outright while you are
+    # talking, this covers the case where she was simply busy speaking.
+    SILENCE_SIGNAL_TTL = 60.0
+
     # --- Voice gate (VAD) ---
     # Holds her back while you are talking. She never gets interrupted
     # mid-line; this only decides when she is allowed to START.
@@ -41,6 +47,26 @@ class Settings:
     # donations are priority 1-2 — a viewer paid for that moment and it should
     # land promptly. Game chatter is 3+ and waits its turn.
     VOICE_INTERRUPT_PRIORITY = 2
+
+    # At or above this priority a held signal is DISCARDED rather than queued.
+    # Ambient chatter (silence_filler, priority 10) exists to fill silence; if
+    # you are talking there is no silence to fill, and saying it once you stop
+    # is saying it out of context. The filler will offer another one later.
+    VOICE_AMBIENT_PRIORITY = 8
+
+    # The gate is asked twice: once at the queue head before dispatch, and
+    # again once her line is synthesised but before any of it plays. The
+    # second check is the one that matters — the first decision is several
+    # seconds stale by the time she opens her mouth (LLM round trip + TTS).
+    # A ready line waits at the mouth this long; past it, it is dropped
+    # rather than said late. Waiting here is cheap: the audio is already in
+    # hand, so she starts the instant you stop.
+    VOICE_MAX_DEFER = 8.0
+
+    # The mic stays deaf this long after her audio ends. Speaker-to-mic
+    # latency means her last syllable is still in the air; without the tail
+    # it comes back, reads as you, and arms a fresh hold against nothing.
+    VOICE_MUTE_TAIL = 0.35
 
     # --- Game reaction rate ---
     # Chance she says anything at all about an event. Frequent, low-stakes
