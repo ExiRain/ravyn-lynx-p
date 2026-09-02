@@ -258,30 +258,33 @@ def test_objective_attribution_in_events():
 
 def _attribution_cases(src, pushed):
 
-    src._handle_dragon({"DragonType": "Infernal", "KillerName": "leesin#RU",
-                        "EventTime": 1500.0})
+    def drake(kind, killer, at):
+        # Advance game time past GAME_MIN_GAP: the global floor between
+        # comments is exercised in test_game_variety, not here.
+        src._current_game_time = at
+        src._handle_dragon({"DragonType": kind, "KillerName": killer,
+                            "EventTime": at})
+
+    drake("Infernal", "leesin#RU", 1500.0)
     check("a teammate's drake names the teammate",
           pushed and "Exiled's teammate LeeSin took" in pushed[-1].text,
           pushed[-1].text if pushed else "nothing pushed")
 
     pushed.clear()
-    src._handle_dragon({"DragonType": "Ocean", "KillerName": "Серый Экран#RU",
-                        "EventTime": 1500.0})
+    drake("Ocean", "Серый Экран#RU", 1600.0)
     check("his own drake names him",
           pushed and pushed[-1].text.startswith("Exiled took"),
           pushed[-1].text if pushed else "nothing pushed")
 
     pushed.clear()
-    src._handle_dragon({"DragonType": "Cloud", "KillerName": "elise#RU",
-                        "EventTime": 1500.0})
+    drake("Cloud", "elise#RU", 1700.0)
     check("an enemy drake names the enemy",
           pushed and "The enemy Elise took" in pushed[-1].text,
           pushed[-1].text if pushed else "nothing pushed")
 
     # A neutral or unresolvable killer must not become a champion name.
     pushed.clear()
-    src._handle_dragon({"DragonType": "Mountain", "KillerName": "SRU_Dragon",
-                        "EventTime": 1500.0})
+    drake("Mountain", "SRU_Dragon", 1800.0)
     check("an unresolvable killer is not invented into a champion",
           pushed and "SRU_Dragon" not in pushed[-1].text,
           pushed[-1].text if pushed else "nothing pushed")

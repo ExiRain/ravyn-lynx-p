@@ -33,10 +33,19 @@ MID_UNTIL = 30
 DRAGON_SOUL_AT = 4      # 4 drakes take soul; 3 is the point where it looms
 
 
+# The API's position values, shortened for the prompt. UTILITY is the support
+# slot; nobody says "utility" out loud.
+ROLE_SHORT = {
+    "top": "top", "jungle": "jungle", "middle": "mid",
+    "bottom": "bot", "utility": "support",
+}
+
+
 @dataclass
 class Player:
     """One player's scoreboard row, for the champion she is allowed to name."""
     champion: str = ""
+    position: str = ""
     kills: int = 0
     deaths: int = 0
     assists: int = 0
@@ -46,8 +55,18 @@ class Player:
     def kda(self) -> str:
         return f"{self.kills}/{self.deaths}/{self.assists}"
 
+    @property
+    def role(self) -> str:
+        return ROLE_SHORT.get(self.position, self.position)
+
     def __str__(self) -> str:
-        return f"{self.champion} {self.kda}"
+        """
+        "Lissandra mid 3/1/5". The role is the half that stops her confusing
+        lanes — without it she has no way to know the enemy mid is not the
+        person standing next to him.
+        """
+        role = f" {self.role}" if self.role else ""
+        return f"{self.champion}{role} {self.kda}"
 
 
 @dataclass
@@ -165,6 +184,27 @@ class GameState:
     def kda_line(self) -> str:
         return f"{self.kills}/{self.deaths}/{self.assists}"
 
+    def enemy_roles(self) -> dict[str, str]:
+        """
+        Champion -> role for the enemy team.
+
+        STATUS.md §7 recorded `position` as "unreliable — frequently empty",
+        which is why matchup notes could only ever claim "on the enemy team".
+        It came back populated for all ten players on the live client, so lane
+        matchups are real now. Still best-effort: anyone the API leaves blank is
+        simply absent from this map and claims nothing.
+        """
+        return {p.champion: p.position for p in self.enemies if p.position}
+
+    def lane_opponent(self) -> Player | None:
+        """The enemy in the same role. None unless both sides are known."""
+        if not self.position:
+            return None
+        for p in self.enemies:
+            if p.position and p.position == self.position:
+                return p
+        return None
+
     def worst_ally(self) -> Player | None:
         """The teammate having the worst game, by deaths against contribution."""
         if not self.allies:
@@ -270,7 +310,9 @@ class GameState:
             mine = self._is_me(p, my_names)
             cs_by_player.append((cs, mine))
 
-            row = Player(champion=champ, kills=kills,
+            row = Player(champion=champ,
+                         position=(p.get("position") or "").lower(),
+                         kills=kills,
                          deaths=int(scores.get("deaths", 0) or 0),
                          assists=int(scores.get("assists", 0) or 0), cs=cs)
 
@@ -420,7 +462,7 @@ class GameState:
         if self.champion:
             who = f"Exiled: {self.champion}"
             if self.position:
-                who += f" {self.position}"
+                who += f" {ROLE_SHORT.get(self.position, self.position)}"
             if self.level:
                 who += f", level {self.level}"
             who += f", {self.kda_line}"
@@ -444,6 +486,11 @@ class GameState:
         objectives = self._objective_line()
         if objectives:
             lines.append(objectives)
+
+        opponent = self.lane_opponent()
+        if opponent:
+            lines.append(f"His lane opponent is {opponent} "
+                         f"({opponent.cs} CS to his {self.cs}).")
 
         if self.allies:
             lines.append("His team: " + ", ".join(str(p) for p in self.allies) + ".")

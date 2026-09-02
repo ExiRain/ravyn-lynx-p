@@ -310,6 +310,60 @@ def test_burst_decay():
           abs(source._reaction_chance("AllyDeath", "AllyDeath") - base) < 1e-9)
 
 
+def test_global_gap():
+    """
+    A floor under the gap between ANY two game comments.
+
+    Per-type decay stops her repeating a KIND of remark, but five different
+    event types landing inside one teamfight still had her narrating without a
+    break — she finishes a line, the next queued event goes straight out. The
+    live session was terminated over exactly this.
+    """
+    print("\n--- the global gap between comments ---")
+    from sources.lol_game import LolGameSource
+
+    source = LolGameSource.__new__(LolGameSource)
+    source._reaction_log = {}
+    source._last_game_comment = 0.0
+    source._current_game_time = 600.0
+    source.state = GameState()
+    source.angles = AngleChooser()
+    source._read = None
+    source._player_summoner = "exiled"
+    source._player_champion = "Riven"
+    pushed = []
+    source.queue = types.SimpleNamespace(push=pushed.append)
+
+    import sources.lol_game as lol
+    original = lol.random.random
+    lol.random.random = lambda: 0.0     # isolate the gap from the dice
+    try:
+        # Five different event types, all inside one fight.
+        for offset, (kind, event) in enumerate([
+                ("AllyDeath", "AllyDeath"), ("AllyKill", "AllyKill"),
+                ("DragonKill", "DragonKill"), ("TurretKilled", "TurretKilled"),
+                ("AllyDeath", "AllyDeath")]):
+            source._current_game_time = 600.0 + offset * 4
+            source._push_event(kind, f"event {offset}", {}, event)
+
+        check("one teamfight produces one comment, not five",
+              len(pushed) == 1, f"{len(pushed)}")
+
+        # Well after the gap, she speaks again.
+        source._current_game_time = 600.0 + S.GAME_MIN_GAP + 5
+        source._push_event("AllyDeath", "much later", {}, "AllyDeath")
+        check("she speaks again once the gap has passed", len(pushed) == 2,
+              f"{len(pushed)}")
+
+        # A sub-priority moment cuts through it.
+        source._current_game_time += 1
+        source._push_event("GameEnd", "game over", {}, "GameEnd")
+        check("high-priority events ignore the gap", len(pushed) == 3,
+              f"{len(pushed)}")
+    finally:
+        lol.random.random = original
+
+
 def main():
     test_state()
     test_role_detection()
@@ -318,6 +372,7 @@ def main():
     test_flat_game_still_varies()
     test_angles_only_fire_on_true_facts()
     test_burst_decay()
+    test_global_gap()
 
     print()
     if FAILURES:

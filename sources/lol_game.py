@@ -119,6 +119,7 @@ class LolGameSource:
 
         # game-time stamps of each reaction, per event type, for burst decay
         self._reaction_log: dict[str, list[float]] = {}
+        self._last_game_comment = 0.0
 
         # load quotes
         self._quotes = self._load_quotes(data_dir / "game_quotes.json")
@@ -252,6 +253,7 @@ class LolGameSource:
         self._ally_deaths = {}
         self._recent_ally_deaths = []
         self._reaction_log = {}
+        self._last_game_comment = 0.0
 
         self._apply_identity(data)
 
@@ -379,8 +381,11 @@ class LolGameSource:
             champion=self.state.champion,
             role=self.state.position,
             enemy_champions=self.state.enemy_champions,
-            # Enemy roles are not detectable yet — see champion_notes.read.
-            enemy_roles={},
+            # The live client returns `position` for all ten players, so a
+            # matchup note can now claim the lane on measurement rather than
+            # on his file having scoped it. §7 assumed this field was too
+            # unreliable to use; it is not.
+            enemy_roles=self.state.enemy_roles(),
         )
         if self._read and previous is None:
             print(f"[notes] {self.state.champion or '?'} "
@@ -864,14 +869,28 @@ class LolGameSource:
 
     def _push_event(self, config_key: str, text: str, raw_event: dict,
                     event_type: str, extra_context: dict = None):
+        config = EVENT_CONFIG.get(config_key,
+                                  EVENT_CONFIG.get(event_type,
+                                                   {"priority": 5, "ttl": 15}))
+
+        # A floor under the gap between any two game comments. Per-type decay
+        # stops her repeating a KIND of remark; this stops her narrating
+        # continuously when five different kinds land inside one fight.
+        # High-priority moments still cut through.
+        if config["priority"] > settings.VOICE_INTERRUPT_PRIORITY:
+            since = self._current_game_time - self._last_game_comment
+            if self._last_game_comment > 0 and since < settings.GAME_MIN_GAP:
+                print(f"[lol] {config_key}: skipped "
+                      f"(only {since:.0f}s since her last line)")
+                return
+
         chance = self._reaction_chance(config_key, event_type)
         if chance < 1.0 and random.random() > chance:
             print(f"[lol] {config_key}: skipped (chance {chance:.2f})")
             return
 
         self._reaction_log.setdefault(config_key, []).append(self._current_game_time)
-
-        config = EVENT_CONFIG.get(config_key, EVENT_CONFIG.get(event_type, {"priority": 5, "ttl": 15}))
+        self._last_game_comment = self._current_game_time
         ctx = {
             "trigger": "game_event",
             "game": "league_of_legends",
@@ -897,7 +916,10 @@ class LolGameSource:
             ctx["has_matchup_note"] = bool(self._read.matchups)
             ctx["has_champion_history"] = bool(self._read.champion_history)
             ctx["has_role_note"] = bool(self._read.role_read)
-            ctx["is_offrole"] = self._read.offrole
+            # Requires the note to have real text: the flag alone would fire
+            # the angle with nothing for her to say.
+            ctx["is_offrole"] = bool(self._read.offrole
+                                     and self._read.offrole_read)
             ctx["role_skill"] = self._read.role_skill
 
         angle = self.angles.choose(event_type, self.state, ctx)
