@@ -34,9 +34,31 @@ DRAGON_SOUL_AT = 4      # 4 drakes take soul; 3 is the point where it looms
 
 
 @dataclass
+class Player:
+    """One player's scoreboard row, for the champion she is allowed to name."""
+    champion: str = ""
+    kills: int = 0
+    deaths: int = 0
+    assists: int = 0
+    cs: int = 0
+
+    @property
+    def kda(self) -> str:
+        return f"{self.kills}/{self.deaths}/{self.assists}"
+
+    def __str__(self) -> str:
+        return f"{self.champion} {self.kda}"
+
+
+@dataclass
 class Side:
     """One team's objective tally."""
     dragons: list[str] = field(default_factory=list)
+    # Champion names of whoever actually took each objective, in order. The
+    # side tally answers "who is winning"; this answers "who is doing it",
+    # which is the difference between "your team has three drakes" and "your
+    # jungler has taken all three of those himself".
+    objective_takers: list[str] = field(default_factory=list)
     barons: int = 0
     heralds: int = 0
     turrets: int = 0
@@ -69,12 +91,21 @@ class GameState:
     ally_champions: list[str] = field(default_factory=list)
     enemy_champions: list[str] = field(default_factory=list)
 
+    # Full scoreboard rows. The team totals answer "who is winning"; these
+    # answer "who is doing it", which is the difference between "your team is
+    # eight kills down" and "your bot lane is nine deaths between them".
+    allies: list[Player] = field(default_factory=list)
+    enemies: list[Player] = field(default_factory=list)
+
     ours: Side = field(default_factory=Side)
     theirs: Side = field(default_factory=Side)
 
     # set once per game, from the summoner spells, so it survives an empty
-    # `position` field. See _detect_role.
+    # `position` field. See _absorb_role.
     _role_source: str = ""
+
+    # one-shot so a broken identity does not print every two seconds
+    _warned_no_team: bool = False
 
     # ---------------------------------------------------------
     # derived
@@ -134,6 +165,35 @@ class GameState:
     def kda_line(self) -> str:
         return f"{self.kills}/{self.deaths}/{self.assists}"
 
+    def worst_ally(self) -> Player | None:
+        """The teammate having the worst game, by deaths against contribution."""
+        if not self.allies:
+            return None
+        scored = [p for p in self.allies if p.deaths >= 3]
+        if not scored:
+            return None
+        return max(scored, key=lambda p: p.deaths - (p.kills + p.assists / 2.0))
+
+    def best_ally(self) -> Player | None:
+        if not self.allies:
+            return None
+        return max(self.allies, key=lambda p: p.kills + p.assists / 2.0 - p.deaths)
+
+    def biggest_threat(self) -> Player | None:
+        """The enemy who is actually winning the game for them."""
+        if not self.enemies:
+            return None
+        top = max(self.enemies, key=lambda p: p.kills - p.deaths)
+        return top if top.kills >= 4 and top.kills > top.deaths else None
+
+    def carrying(self) -> bool:
+        """Is he outperforming everyone on his own team?"""
+        if not self.allies:
+            return False
+        mine = self.kills + self.assists / 2.0 - self.deaths
+        return all(mine > p.kills + p.assists / 2.0 - p.deaths
+                   for p in self.allies)
+
     def mood(self) -> float:
         """
         How the game is going, as a number in [-1, 1].
@@ -172,13 +232,32 @@ class GameState:
     # ---------------------------------------------------------
 
     def update(self, data: dict, my_team: str, my_names: set[str]) -> None:
-        """Refresh from one allgamedata poll. Cheap; called every 2s."""
+        """
+        Refresh from one allgamedata poll. Cheap; called every 2s.
+
+        Refuses to split the teams without knowing his. The caller is supposed
+        to have resolved identity before ever calling this, but the cost of it
+        being wrong is not a missing line — it is a confident wrong one. With
+        an empty `my_team` the old code matched nobody as an ally and swept all
+        ten champions into `enemy_champions`, so she opened a game commenting
+        on the "chaotic mix" of a ten-man enemy team. Better to know the minute
+        and nothing else.
+        """
         self.game_time = data.get("gameData", {}).get("gameTime", 0.0) or 0.0
 
         players = data.get("allPlayers", []) or []
+
+        if not my_team:
+            if not self._warned_no_team:
+                self._warned_no_team = True
+                print("[state] No team resolved — holding team splits empty "
+                      "rather than guessing sides")
+            return
         cs_by_player: list[tuple[int, bool]] = []
 
         ally, enemy = [], []
+        ally_rows: list[Player] = []
+        enemy_rows: list[Player] = []
         our_kills = their_kills = 0
 
         for p in players:
@@ -191,14 +270,20 @@ class GameState:
             mine = self._is_me(p, my_names)
             cs_by_player.append((cs, mine))
 
+            row = Player(champion=champ, kills=kills,
+                         deaths=int(scores.get("deaths", 0) or 0),
+                         assists=int(scores.get("assists", 0) or 0), cs=cs)
+
             if team == my_team:
                 our_kills += kills
                 if not mine and champ:
                     ally.append(champ)
+                    ally_rows.append(row)
             elif team:
                 their_kills += kills
                 if champ:
                     enemy.append(champ)
+                    enemy_rows.append(row)
 
             if mine:
                 self.champion = champ or self.champion
@@ -213,6 +298,8 @@ class GameState:
         if ally or enemy:
             self.ally_champions = ally
             self.enemy_champions = enemy
+            self.allies = ally_rows
+            self.enemies = enemy_rows
 
         # Team kill totals come from the scoreboard, not from counting events:
         # events can be missed while the client is starting up, scores cannot.
@@ -264,23 +351,54 @@ class GameState:
     # objectives, from events
     # ---------------------------------------------------------
 
-    def record_dragon(self, side: str, dragon_type: str) -> None:
-        self._side(side).dragons.append(dragon_type or "Unknown")
+    def record_dragon(self, side: str, dragon_type: str,
+                      taker: str = "") -> None:
+        target = self._side(side)
+        if target is None:
+            return
+        target.dragons.append(dragon_type or "Unknown")
+        if taker:
+            target.objective_takers.append(taker)
 
-    def record_baron(self, side: str) -> None:
-        self._side(side).barons += 1
+    def record_baron(self, side: str, taker: str = "") -> None:
+        target = self._side(side)
+        if target is None:
+            return
+        target.barons += 1
+        if taker:
+            target.objective_takers.append(taker)
 
-    def record_herald(self, side: str) -> None:
-        self._side(side).heralds += 1
+    def record_herald(self, side: str, taker: str = "") -> None:
+        target = self._side(side)
+        if target is None:
+            return
+        target.heralds += 1
+        if taker:
+            target.objective_takers.append(taker)
 
     def record_turret(self, side: str) -> None:
-        self._side(side).turrets += 1
+        target = self._side(side)
+        if target is not None:
+            target.turrets += 1
 
     def record_inhibitor(self, side: str) -> None:
-        self._side(side).inhibitors += 1
+        target = self._side(side)
+        if target is not None:
+            target.inhibitors += 1
 
-    def _side(self, side: str) -> Side:
-        return self.ours if side == "mine" else self.theirs
+    def _side(self, side: str):
+        """
+        None when the side is unknown, and the caller then records nothing.
+
+        A tally is only worth keeping if it is right. Filing an unattributed
+        objective under either team produces a drake score she will state
+        confidently and wrongly, which is worse than her not mentioning drakes.
+        """
+        if side == "mine":
+            return self.ours
+        if side == "enemy":
+            return self.theirs
+        return None
 
     # ---------------------------------------------------------
     # rendering
@@ -327,7 +445,12 @@ class GameState:
         if objectives:
             lines.append(objectives)
 
-        if self.enemy_champions:
+        if self.allies:
+            lines.append("His team: " + ", ".join(str(p) for p in self.allies) + ".")
+
+        if self.enemies:
+            lines.append("Enemy team: " + ", ".join(str(p) for p in self.enemies) + ".")
+        elif self.enemy_champions:
             lines.append("Enemy team: " + ", ".join(self.enemy_champions) + ".")
 
         if not lines:
@@ -343,6 +466,12 @@ class GameState:
             return ""
 
         line = f"Drakes: yours {ours}, theirs {theirs}"
+
+        # Who actually took them. One champion on every drake is a different
+        # story from four different people, and only this says which.
+        takers = self.ours.objective_takers
+        if ours >= 2 and takers and len(set(takers)) == 1:
+            line += f" (all of yours taken by {takers[0]})"
 
         taken = self.soul_taken
         if taken == "ours":
