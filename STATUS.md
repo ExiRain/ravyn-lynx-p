@@ -43,6 +43,9 @@ Companion file: `ravyn-nb/STATUS.md` (the notebook side).
 | Concern | Machine | File |
 |---|---|---|
 | What she reacts to, priority, TTL | PC | `orchestrator/`, `sources/` |
+| What is true in the game right now | PC | `orchestrator/game_state.py` |
+| What Exiled told her about his account | PC | `data/champions.json`, `orchestrator/champion_notes.py` |
+| How this reaction differs from the last | PC | `orchestrator/game_angles.py` |
 | Busy/idle state | PC | `dispatcher.py` + `services/response_listener.py` |
 | Voice gate (VAD) | PC | `sources/voice_gate.py` |
 | Language resolution | PC | `orchestrator/language.py` |
@@ -136,9 +139,15 @@ silent quote-mode.
 
 ### Tests
 
-`tests/test_voice_gate.py` is committed and runs standalone
-(`python tests/test_voice_gate.py`) — 34 checks over the gate, the mute window
-and the dispatch policy.
+Two committed suites, both standalone (no pytest, no network):
+
+- `python tests/test_voice_gate.py` — 34 checks: the gate, the mute window, the
+  dispatch policy
+- `python tests/test_game_variety.py` — 56 checks: measured state, role
+  detection, mood, angle variety, the unconditional floor, burst decay
+- `python tests/test_champion_notes.py` — 42 checks: lookup, off-role, how
+  confidently a lane is claimed, labelling, and that note angles stay silent
+  when nothing is written
 
 Eleven older suites are still in the scratchpad (not committed — worth moving
 into the repos). They stub TTS, CUDA, RabbitMQ and Godot, so they verify logic,
@@ -291,23 +300,53 @@ needs no knowledge at all:
 Always correct, funnier than a matchup take, and it scales to every champion
 without a single line of champion data — which was the original worry.
 
-### Attributes, not combinations
+### Attributes, not combinations — `data/champions.json`
 
 5 roles × ~170 champions is 850 combinations. Do not enumerate them. Enumerate
-*attributes* and let the LLM combine:
+*attributes* and let the LLM combine. **Built** — `data/champions.json`, read by
+`orchestrator/champion_notes.py`:
 
-```yaml
-roles:
-  jungle:  { skill: worst, read: "not even trying to win" }
-  top:     { skill: best,  read: "comfort zone, splitpush into oblivion" }
-  support: { skill: n/a,   read: "passing time, zero effort" }
-champions:
-  Riven:   { history: "plays constantly, never wins", offmeta_in: [jungle, adc, support] }
+```json
+"roles":     { "top": { "skill": "best", "read": "where I know what I'm doing" } },
+"champions": { "Riven": { "main_role": "top",
+                          "history":   "I play her constantly and still lose",
+                          "offrole_read": "still learning her anywhere but top",
+                          "matchups": { "Garen": "I never win this lane" } } }
 ```
 
 Five role entries plus however many champions you feel like tagging. Untagged
-champions fall back to role-only commentary. **The file is never finished and
-never needs to be.**
+champions fall back to role-only commentary; an unknown role falls back to
+champion-only; a missing or malformed file disables the lines and nothing else.
+**The file is never finished and never needs to be.**
+
+**Write it in your voice, as claims about yourself.** "I never win this lane" is
+yours to say; "Riven loses to Garen" is a claim about the game and does not
+belong there. It reaches the prompt under its own heading — *"his words about
+his own account, not facts the game gave you"* — kept separate from the measured
+SITUATION block so she can never launder your opinion into something the game
+told her. Without that label the situation block's "do not state anything beyond
+these" would silently forbid these lines too.
+
+The shipped file is **all placeholders**, marked as such. Overwrite them.
+
+Champion keys match loosely — case, spaces and punctuation are ignored, so
+`Lee Sin`, `leesin` and `LeeSin` are one key. Wukong is `MonkeyKing` in the API;
+either spelling works.
+
+**How confidently she claims a lane.** Enemy roles are not detectable yet, so a
+matchup note is framed three ways:
+
+| Framing | When |
+|---|---|
+| *"On laning against Garen"* | Both roles measured and equal, **or** you filed the note under a champion whose `main_role` is the role he is playing — writing Garen under Riven-top is *your* assertion that this is a top matchup, and §7 permits anything you told her |
+| *"On Garen, who is on the enemy team"* | The champion is in the game but nothing establishes the lane. Still true, still fires |
+| nothing | You wrote no note about anyone on that team |
+
+Five angles read the file: `start_matchup_note`, `start_offrole`,
+`start_champion_history`, `start_role_read` at game start, and
+`my_death_told_you` when he dies to a champion he warned you about. All are
+gated on a note actually existing, so an empty file leaves the generic openers
+behaving exactly as before.
 
 ### Identity — multi-account and RU server
 
@@ -337,14 +376,20 @@ World Atlas → Runic Compass for support, and quest items for top/mid/adc. Sinc
 role**.
 
 **Do not hardcode item names from memory — that is the exact failure mode this
-section exists to avoid.** Capture ground truth:
+section exists to avoid.**
 
-```powershell
-curl.exe -k https://127.0.0.1:2999/liveclientdata/allgamedata > game.json
-```
+Role detection currently does only what it can prove: `position` when the API
+fills it in, otherwise Smite → jungle, otherwise **unknown, and omitted from the
+prompt entirely**. The Smite check scans every string under `summonerSpells`
+rather than naming a field, because the RU client localises `displayName` and
+the locale-independent raw key (`…SummonerSmite…`) still carries the name.
 
-One mid-game capture gives the real item IDs on all ten players. It also
-self-documents when a patch changes things.
+Ground truth now captures itself: `_log_role_ground_truth` prints `position`,
+summoner spells and items for all ten players once per game, under
+`[lol][roles]`. One game in the log gives the real item names to write the quest
+detector against — no curl needed, and it self-documents when a patch changes
+things. (The manual route still works:
+`curl.exe -k https://127.0.0.1:2999/liveclientdata/allgamedata > game.json`.)
 
 ### What the API can and cannot see
 
@@ -358,18 +403,61 @@ self-documents when a patch changes things.
 Derivable: items vs items, lane matchup, CS differential, solo kill vs teamfight
 (`len(Assisters)`), gank *inferred* (enemy jungler on a lane target).
 
-### Why she felt repetitive
+### Why she felt repetitive — and what was done about it
 
-The quote pools are fine — **23 of 24 fire**. The bottleneck was that five event
-types (DragonKill, HeraldKill, TurretKilled, AllyKill, AllyDeath — the most
-frequent in any game) all collapsed into one "be dismissive" instruction. The
-seeds varied; the instruction did not.
+The quote pools were never the problem; **23 of 24 fire**. Three things were:
 
-Real variation needs more *distinct situations*, not more lines per situation —
-which is the same work as the observation list above.
+1. **One instruction for five event types.** DragonKill, HeraldKill,
+   TurretKilled, AllyKill and AllyDeath — the most frequent events in any game
+   — all collapsed into a single "be dismissive" line. The seeds varied; the
+   instruction did not, so the model converged.
+2. **The game state was thrown away.** The Live Client API was polled every two
+   seconds and `_push_event` forwarded her champion name and nothing else. She
+   had no idea what minute it was, what the score was, or how many drakes were
+   gone, so every ally death was the same prompt.
+3. **Volume.** `AllyDeath` at 0.6 over roughly twenty-five deaths in a losing
+   game is fifteen comments about other people dying, all drawn from five seeds.
+
+Now:
+
+| Piece | File | What it does |
+|---|---|---|
+| **Measured state** | `orchestrator/game_state.py` | Keeps the poll: minute and phase, his champion/role/level/KDA/CS (and CS rank across all ten), team kill totals, drake–baron–herald–tower–inhibitor counts per side, soul point, both team comps |
+| **Angles** | `orchestrator/game_angles.py` | ~93 instructions across 15 event types. Each fires only when its facts are true, and the least recently used one wins |
+| **Burst decay** | `REACTION_DECAY`, `REACTION_WINDOW` | Each reaction of the same kind inside 90 game-seconds multiplies the next one's chance by 0.55, so one teamfight is one comment |
+| **Mood** | `GameState.mood()` | Kill lead, objective lead and his own line → [-1, 1], fed as `mood_spike`. Her face used to be flat until a fifth death |
+
+The angle is what actually creates variety: the same ally death reads
+differently at 4 minutes and 34, eight kills up versus eight down, first of the
+game versus fourth in ninety seconds. Those are real differences in the game, so
+they are honest differences in what she says — and they cost nothing, because
+the state was already being fetched.
+
+**The floor rule.** Situational angles are the good ones, but they go quiet in a
+flat game — an even scoreline at twelve minutes makes almost none of them true.
+A list whose floor is one always-eligible angle then repeats that one back to
+back, which is the original bug in miniature. So every event type carries at
+least `MIN_UNCONDITIONAL` (3) angles that are *registers* rather than reads —
+the same fact deadpan, clipped, or with a sigh is honest whatever the score.
+`tests/test_game_variety.py` enforces this.
+
+Measured on a simulated 34-minute losing game: **13 distinct angles across 14
+signals**, ally-death comments down from ~15 to ~7.
+
+**Event text is now a plain fact.** `Your those things on team LeeSin died` was
+being handed to the model — the collective-noun pool has mixed grammatical forms
+and splicing it into a possessive sentence broke the English. The slang is *her*
+vocabulary and comes from the persona; the event text just says what happened.
+
+**Tuning, in order:** `REACTION_CHANCE` per event if she talks too much;
+`REACTION_DECAY` if bursts still cluster; add angles to the lists in
+`game_angles.py` if a particular event feels stale. Adding an angle is a
+three-line change and needs no other edits.
 
 Loose ends: `MyAssist` is routed but never emitted; `teammates.ally_death_multiple`
-is written but never used.
+is written but never used; the `teammates.names` pool is now only read by
+`_pick_teammate_name`, which nothing calls — either wire it into the persona or
+delete it.
 
 ### Champ select
 
@@ -382,13 +470,19 @@ it happens and gain not building a second client.
 
 ### Build order
 
-1. **Name list** — small, fixes a live bug
-2. **Capture `game.json`** — 30 seconds, unblocks everything below
-3. **Role detection from quest items** + game-start comment, role guidelines only
-4. **Observational commentary** — CS, gold, deaths, item timings. The big win, no champion data
-5. **Per-champion history lines** for the five or six he plays — flavour, added lazily
+1. ~~**Name list**~~ — still open, small, fixes a live bug
+2. ~~**Capture `game.json`**~~ — **done differently**: `[lol][roles]` logs it
+   every game, so one played game gives the ground truth
+3. **Role detection from quest items** — the plumbing exists (`GameState.position`,
+   used by the situation block when known). It needs the real item names from
+   the `[lol][roles]` log, and nothing else
+4. ~~**Observational commentary**~~ — **done**. CS, CS/min, CS rank, KDA, kill
+   lead, drake and tower counts, minute and phase all reach the prompt
+5. ~~**Per-champion history lines**~~ — **plumbing done**, `data/champions.json`.
+   What remains is writing your actual notes over the placeholders
 6. **Comp counting** — last, optional. Tag `heavy_cc` / `hard_engage` yourself so
-   "five of them can stop you moving" is arithmetic on *your* data, never her opinion
+   "five of them can stop you moving" is arithmetic on *your* data, never her
+   opinion. The enemy champion list is already in the situation block
 
 Keep champion data **out of** `game_quotes.json`. Quotes are what she says;
 champion tags are facts about the game. Different lifecycles.
