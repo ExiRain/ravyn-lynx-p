@@ -26,6 +26,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+# A note still carrying this is the shipped example, not his writing. It must
+# never reach the model: the first live run had her open a game with "That only
+# when a friend duos comment? It sounds like you're just trying to explain
+# away" — she was gamely trying to make sense of the literal word PLACEHOLDER.
+# Shipping example text down the same path as real text was the mistake; the
+# file is a template, so the template markers have to be inert.
+PLACEHOLDER_MARKER = "PLACEHOLDER"
+
+
+def is_placeholder(value: str) -> bool:
+    return PLACEHOLDER_MARKER in (value or "").upper()
+
+
 def normalise(name: str) -> str:
     """
     'Lee Sin', 'leesin' and "Kai'Sa" all collapse to one key.
@@ -67,6 +80,8 @@ class ChampionRead:
     matchups: list[tuple[str, str, str]] = field(default_factory=list)
 
     def __bool__(self) -> bool:
+        # `offrole` alone is not content — it is a flag about a note that may
+        # itself have been a placeholder. Only actual text counts.
         return bool(self.role_read or self.champion_history
                     or self.offrole_read or self.matchups)
 
@@ -129,8 +144,26 @@ class ChampionNotes:
         self.roles = {k.lower(): v for k, v in (data.get("roles") or {}).items()}
         self.champions = {key(k): v
                           for k, v in (data.get("champions") or {}).items()}
+
+        held = self._count_placeholders()
         print(f"[notes] Loaded {len(self.roles)} roles, "
               f"{len(self.champions)} champions from {path.name}")
+        if held:
+            print(f"[notes] {held} entries are still PLACEHOLDER — ignored. "
+                  f"Overwrite them in {path.name} to switch these lines on.")
+
+    def _count_placeholders(self) -> int:
+        total = 0
+        for entry in list(self.roles.values()) + list(self.champions.values()):
+            if not isinstance(entry, dict):
+                continue
+            for value in entry.values():
+                if isinstance(value, str) and is_placeholder(value):
+                    total += 1
+                elif isinstance(value, dict):
+                    total += sum(1 for v in value.values()
+                                 if isinstance(v, str) and is_placeholder(v))
+        return total
 
     # ---------------------------------------------------------
 
@@ -157,16 +190,16 @@ class ChampionNotes:
         out = ChampionRead(champion=champion, role=(role or "").lower())
 
         role_entry = self.roles.get(out.role) or {}
-        out.role_skill = str(role_entry.get("skill", "") or "")
-        out.role_read = str(role_entry.get("read", "") or "")
+        out.role_skill = _real(role_entry.get("skill"))
+        out.role_read = _real(role_entry.get("read"))
 
         champ_entry = self.champions.get(key(champion)) or {}
-        out.champion_history = str(champ_entry.get("history", "") or "")
+        out.champion_history = _real(champ_entry.get("history"))
 
         main_role = str(champ_entry.get("main_role", "") or "").lower()
         if main_role and out.role and out.role != main_role:
             out.offrole = True
-            out.offrole_read = str(champ_entry.get("offrole_read", "") or "")
+            out.offrole_read = _real(champ_entry.get("offrole_read"))
 
         matchups = champ_entry.get("matchups") or {}
         if matchups and enemy_champions:
@@ -177,6 +210,9 @@ class ChampionNotes:
                 if not found:
                     continue
                 _, note = found
+                note = _real(note)
+                if not note:
+                    continue    # a placeholder matchup is no matchup
 
                 # Measured: both roles known and equal.
                 enemy_role = (enemy_roles.get(enemy) or "").lower()
@@ -192,3 +228,9 @@ class ChampionNotes:
                     (enemy, note, "lane" if (measured or asserted) else "team"))
 
         return out
+
+
+def _real(value) -> str:
+    """The value, or "" if it is a template placeholder or missing."""
+    text = str(value or "")
+    return "" if is_placeholder(text) else text

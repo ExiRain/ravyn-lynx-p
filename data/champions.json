@@ -23,7 +23,13 @@
     "in the API; either spelling works here.",
     "",
     "EVERY VALUE BELOW IS A PLACEHOLDER taken from the §7 sketch. Overwrite them.",
-    "They are the shape, not your actual account."
+    "They are the shape, not your actual account.",
+    "",
+    "Any value still containing the word PLACEHOLDER is IGNORED — it never",
+    "reaches the model, and the angle that would have used it does not fire.",
+    "The startup log says how many are still waiting. This is deliberate: on",
+    "the first live run the example text went straight to the LLM and she",
+    "opened a game trying to make sense of the word PLACEHOLDER out loud."
   ],
 
   "roles": {

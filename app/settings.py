@@ -99,6 +99,14 @@ class Settings:
     REACTION_DECAY = 0.55
     REACTION_WINDOW = 90.0
 
+    # A floor under the gap between ANY two game comments, in game seconds.
+    # The per-type decay above stops her saying the same kind of thing twice,
+    # but five different event types firing back to back still reads as
+    # non-stop commentary — she finishes a line, the next queued event goes
+    # straight out, and she talks continuously for a whole teamfight. Only
+    # priority <= VOICE_INTERRUPT_PRIORITY skips this.
+    GAME_MIN_GAP = 20.0
+
     # --- Twitch ---
     TWITCH_CHANNEL = "exiledra1n"
 

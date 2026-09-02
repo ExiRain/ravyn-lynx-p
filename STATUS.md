@@ -127,6 +127,14 @@ silent quote-mode.
 
 ### Bugs found and fixed, worth not reintroducing
 
+- **Shipped PLACEHOLDER text reached the model.** `data/champions.json` ships as
+  a template, and its example strings went down the same path as real notes. She
+  opened a game with *"That only when a friend duos comment? It sounds like
+  you're just trying to explain away"* — gamely parsing the literal word
+  PLACEHOLDER. Template markers are now inert (`champion_notes.is_placeholder`),
+  and load logs how many are still waiting to be overwritten
+- **Game events were conversation history.** `MAX_HISTORY = 5`, and she repeated
+  herself 5-6 times in a row. See §7 "Why she repeated herself"
 - **Game accepted from a loading-screen snapshot** → empty identity latched for
   the whole match, all ten champions read as the enemy team, every objective
   counted as his. See §7 "Identity"
@@ -153,6 +161,9 @@ Two committed suites, both standalone (no pytest, no network):
   when nothing is written
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
+
+On the notebook: `python tests/test_game_memory.py` — 14 checks that game events
+are kept out of conversation history.
 
 Eleven older suites are still in the scratchpad (not committed — worth moving
 into the repos). They stub TTS, CUDA, RabbitMQ and Godot, so they verify logic,
@@ -404,10 +415,35 @@ The rule, and it is the same one as §7's opening: **being unable to answer is a
 reason to wait, never a reason to guess.** A wrong team does not produce a
 missing line, it produces a confident wrong one.
 
-### Role detection
+### Role detection — `position` works, use it
 
-The `position` field is unreliable — frequently empty. Summoner spells only
-distinguish jungle (Ignite goes on top/mid/adc/support alike).
+**Earlier planning here was wrong and cost the matchup feature a whole round.**
+`position` was written off as "unreliable — frequently empty". Live capture says
+otherwise:
+
+```
+[lol][roles] Smolder    position='BOTTOM'   [lol][roles] Darius   position='TOP'
+[lol][roles] Shen       position='TOP'      [lol][roles] Sejuani  position='JUNGLE'
+[lol][roles] Hecarim    position='JUNGLE'   [lol][roles] Lissandra position='MIDDLE'
+[lol][roles] Viktor     position='MIDDLE'   [lol][roles] Zyra     position='UTILITY'
+[lol][roles] Yunara     position='BOTTOM'   [lol][roles] Milio    position='UTILITY'
+```
+
+All ten, both teams. So **enemy roles are known**, which means:
+
+- Matchup notes claim the lane on measurement, not on his file having scoped it
+- `lane_opponent()` is a real fact — *"His lane opponent is Yunara bot 6/0/2
+  (144 CS to his 118)"*
+- Every scoreboard row carries its role: *"Lissandra mid 3/1/5"*. Without it she
+  had no way to tell a mid laner from the person in his lane, and produced
+  cross-lane nonsense like comparing his farm to what the enemy mid was doing
+
+The quest-item work in the next paragraph is now **optional**, a fallback for
+when `position` is empty. Do not start it before checking the `[lol][roles]` log
+of a real game — that is what this capture is for.
+
+Summoner spells only distinguish jungle (Ignite goes on top/mid/adc/support
+alike), and remain the fallback when `position` is blank.
 
 **2026 gave all five roles a quest**, seven items across them — jungle pets,
 World Atlas → Runic Compass for support, and quest items for top/mid/adc. Since
@@ -505,7 +541,42 @@ being handed to the model — the collective-noun pool has mixed grammatical for
 and splicing it into a possessive sentence broke the English. The slang is *her*
 vocabulary and comes from the persona; the event text just says what happened.
 
-**Tuning, in order:** `REACTION_CHANCE` per event if she talks too much;
+### Why she repeated herself
+
+Second live session, terminated by the streamer: *"she was saying Liss was doing
+something while I farm measly CS, she said it 5-6 times in a row"*. Three causes,
+compounding.
+
+**1. Every game event was a conversation turn.** The notebook passed
+`memory.get_history()` for every signal and appended every game reaction with
+`add_exchange`. `MAX_HISTORY` is 5, and she repeated herself 5-6 times — not a
+coincidence. Each event reached the LLM with her last five game reactions
+replayed as a dialogue, where each "user turn" was the whole framed prompt,
+SITUATION block and all. She was shown five near-identical setups plus her own
+five answers, and asked for a sixth. Opener-based anti-repetition could not
+touch it: she varied the first four words and repeated the substance.
+
+Game events now carry **no** history — a game reaction is not a turn in a
+conversation, nobody said anything to her, and her continuity comes from the
+SITUATION block, which is current and accurate where a transcript of five stale
+prompts is neither. What she *said* is kept separately, capped at
+`MAX_GAME_LINES` and cleared on GameStart, purely to tell her not to say it
+again ("do not repeat any of them, and do not rephrase them"). Game lines also
+stay out of the compression budget: a game produces dozens and they would crowd
+out the chat they sit alongside.
+
+**2. No floor under how often she spoke.** Per-type decay stops her repeating a
+*kind* of remark, but five different event types inside one teamfight still had
+her narrating continuously — she finishes a line, the next queued event goes
+straight out. `GAME_MIN_GAP` (20 game-seconds) is a floor between any two game
+comments; only priority ≤ `VOICE_INTERRUPT_PRIORITY` cuts through. Five events
+in one fight now produce one comment.
+
+**3. No roles, so lanes were guesswork.** Fixed by `position` — see §7 "Role
+detection".
+
+**Tuning, in order:** `GAME_MIN_GAP` if she still talks too continuously;
+`REACTION_CHANCE` per event if she talks too much;
 `REACTION_DECAY` if bursts still cluster; add angles to the lists in
 `game_angles.py` if a particular event feels stale. Adding an angle is a
 three-line change and needs no other edits.

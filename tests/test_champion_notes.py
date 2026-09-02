@@ -208,10 +208,29 @@ def test_shipped_file_is_valid():
     check("it parses and loads roles", len(notes.roles) >= 3, str(len(notes.roles)))
     check("it carries a readme", "_readme" in json.loads(path.read_text()))
 
+    # The shipped file is a template. Its example text must be INERT: it went
+    # to the model on the first live run and she opened a game with "That only
+    # when a friend duos comment? It sounds like you're just trying to explain
+    # away" — gamely trying to parse the literal word PLACEHOLDER.
     read = notes.read("Riven", "middle", ENEMIES)
-    check("the shipped example resolves end to end", bool(read))
-    check("placeholders are obvious", "PLACEHOLDER" in read.render(),
+    check("the shipped placeholders produce no notes at all", not bool(read))
+    check("and nothing is rendered for the prompt", read.render() == "",
           read.render()[:80])
+    check("PLACEHOLDER never reaches the model",
+          "PLACEHOLDER" not in read.render())
+
+    # A real note in the same file still works alongside the placeholders.
+    mixed = load({"roles": {"top": {"read": "PLACEHOLDER — overwrite me"}},
+                  "champions": {"Riven": {"history": "I main her"}}})
+    got = mixed.read("Riven", "top", ENEMIES)
+    check("a placeholder role is dropped", got.role_read == "", got.role_read)
+    check("a real champion note beside it survives",
+          got.champion_history == "I main her", got.champion_history)
+
+    placeholder_matchup = load({"champions": {"Riven": {
+        "main_role": "top", "matchups": {"Garen": "PLACEHOLDER — yours"}}}})
+    check("a placeholder matchup is no matchup",
+          placeholder_matchup.read("Riven", "top", ENEMIES).matchups == [])
 
 
 def main():
