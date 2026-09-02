@@ -44,6 +44,7 @@ Companion file: `ravyn-nb/STATUS.md` (the notebook side).
 |---|---|---|
 | What she reacts to, priority, TTL | PC | `orchestrator/`, `sources/` |
 | What is true in the game right now | PC | `orchestrator/game_state.py` |
+| What Exiled told her about his account | PC | `data/champions.json`, `orchestrator/champion_notes.py` |
 | How this reaction differs from the last | PC | `orchestrator/game_angles.py` |
 | Busy/idle state | PC | `dispatcher.py` + `services/response_listener.py` |
 | Voice gate (VAD) | PC | `sources/voice_gate.py` |
@@ -144,6 +145,9 @@ Two committed suites, both standalone (no pytest, no network):
   dispatch policy
 - `python tests/test_game_variety.py` — 56 checks: measured state, role
   detection, mood, angle variety, the unconditional floor, burst decay
+- `python tests/test_champion_notes.py` — 42 checks: lookup, off-role, how
+  confidently a lane is claimed, labelling, and that note angles stay silent
+  when nothing is written
 
 Eleven older suites are still in the scratchpad (not committed — worth moving
 into the repos). They stub TTS, CUDA, RabbitMQ and Godot, so they verify logic,
@@ -296,23 +300,53 @@ needs no knowledge at all:
 Always correct, funnier than a matchup take, and it scales to every champion
 without a single line of champion data — which was the original worry.
 
-### Attributes, not combinations
+### Attributes, not combinations — `data/champions.json`
 
 5 roles × ~170 champions is 850 combinations. Do not enumerate them. Enumerate
-*attributes* and let the LLM combine:
+*attributes* and let the LLM combine. **Built** — `data/champions.json`, read by
+`orchestrator/champion_notes.py`:
 
-```yaml
-roles:
-  jungle:  { skill: worst, read: "not even trying to win" }
-  top:     { skill: best,  read: "comfort zone, splitpush into oblivion" }
-  support: { skill: n/a,   read: "passing time, zero effort" }
-champions:
-  Riven:   { history: "plays constantly, never wins", offmeta_in: [jungle, adc, support] }
+```json
+"roles":     { "top": { "skill": "best", "read": "where I know what I'm doing" } },
+"champions": { "Riven": { "main_role": "top",
+                          "history":   "I play her constantly and still lose",
+                          "offrole_read": "still learning her anywhere but top",
+                          "matchups": { "Garen": "I never win this lane" } } }
 ```
 
 Five role entries plus however many champions you feel like tagging. Untagged
-champions fall back to role-only commentary. **The file is never finished and
-never needs to be.**
+champions fall back to role-only commentary; an unknown role falls back to
+champion-only; a missing or malformed file disables the lines and nothing else.
+**The file is never finished and never needs to be.**
+
+**Write it in your voice, as claims about yourself.** "I never win this lane" is
+yours to say; "Riven loses to Garen" is a claim about the game and does not
+belong there. It reaches the prompt under its own heading — *"his words about
+his own account, not facts the game gave you"* — kept separate from the measured
+SITUATION block so she can never launder your opinion into something the game
+told her. Without that label the situation block's "do not state anything beyond
+these" would silently forbid these lines too.
+
+The shipped file is **all placeholders**, marked as such. Overwrite them.
+
+Champion keys match loosely — case, spaces and punctuation are ignored, so
+`Lee Sin`, `leesin` and `LeeSin` are one key. Wukong is `MonkeyKing` in the API;
+either spelling works.
+
+**How confidently she claims a lane.** Enemy roles are not detectable yet, so a
+matchup note is framed three ways:
+
+| Framing | When |
+|---|---|
+| *"On laning against Garen"* | Both roles measured and equal, **or** you filed the note under a champion whose `main_role` is the role he is playing — writing Garen under Riven-top is *your* assertion that this is a top matchup, and §7 permits anything you told her |
+| *"On Garen, who is on the enemy team"* | The champion is in the game but nothing establishes the lane. Still true, still fires |
+| nothing | You wrote no note about anyone on that team |
+
+Five angles read the file: `start_matchup_note`, `start_offrole`,
+`start_champion_history`, `start_role_read` at game start, and
+`my_death_told_you` when he dies to a champion he warned you about. All are
+gated on a note actually existing, so an empty file leaves the generic openers
+behaving exactly as before.
 
 ### Identity — multi-account and RU server
 
@@ -444,8 +478,8 @@ it happens and gain not building a second client.
    the `[lol][roles]` log, and nothing else
 4. ~~**Observational commentary**~~ — **done**. CS, CS/min, CS rank, KDA, kill
    lead, drake and tower counts, minute and phase all reach the prompt
-5. **Per-champion history lines** for the five or six he plays — flavour, added
-   lazily. Slots into `game_angles.py` as angles with a champion predicate
+5. ~~**Per-champion history lines**~~ — **plumbing done**, `data/champions.json`.
+   What remains is writing your actual notes over the placeholders
 6. **Comp counting** — last, optional. Tag `heavy_cc` / `hard_engage` yourself so
    "five of them can stop you moving" is arithmetic on *your* data, never her
    opinion. The enemy champion list is already in the situation block

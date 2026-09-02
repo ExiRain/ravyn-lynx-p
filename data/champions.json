@@ -1,0 +1,62 @@
+{
+  "_readme": [
+    "Things Exiled has told Ravyn about his own League account.",
+    "",
+    "THIS IS NOT GAME KNOWLEDGE. STATUS.md §7 governing principle: she may only",
+    "assert things you told her, or things the API measured — never anything she",
+    "would have to know about League. Everything in this file is the first kind.",
+    "It reaches the prompt under a heading that says so, kept separate from the",
+    "measured SITUATION block, so she can never present your opinion as a fact",
+    "the game gave her.",
+    "",
+    "That also means: write it in YOUR voice, as claims about YOURSELF. 'I never",
+    "win this lane' is yours to say. 'Riven loses to Garen' is a claim about the",
+    "game and does not belong here.",
+    "",
+    "THE FILE IS NEVER FINISHED AND NEVER NEEDS TO BE. Five role entries and a",
+    "handful of champions is a working file. Untagged champions fall back to",
+    "role-only commentary; unknown roles fall back to champion-only. Nothing",
+    "breaks when something is missing — the line just does not fire.",
+    "",
+    "Champion keys are matched loosely: case, spaces and punctuation are ignored,",
+    "so 'Lee Sin', 'leesin' and 'LeeSin' are the same key. Wukong is 'MonkeyKing'",
+    "in the API; either spelling works here.",
+    "",
+    "EVERY VALUE BELOW IS A PLACEHOLDER taken from the §7 sketch. Overwrite them.",
+    "They are the shape, not your actual account."
+  ],
+
+  "roles": {
+    "top": {
+      "skill": "best",
+      "read": "PLACEHOLDER — comfort zone, splitpushes into oblivion"
+    },
+    "jungle": {
+      "skill": "worst",
+      "read": "PLACEHOLDER — not even trying to win, just farming camps"
+    },
+    "middle": {
+      "skill": "ok",
+      "read": "PLACEHOLDER — fine at it, never practises it"
+    },
+    "bottom": {
+      "skill": "ok",
+      "read": "PLACEHOLDER — only when a friend duos"
+    },
+    "support": {
+      "skill": "none",
+      "read": "PLACEHOLDER — passing time, zero effort"
+    }
+  },
+
+  "champions": {
+    "Riven": {
+      "main_role": "top",
+      "history": "PLACEHOLDER — plays her constantly and still loses with her",
+      "offrole_read": "PLACEHOLDER — still learning her anywhere but top",
+      "matchups": {
+        "Garen": "PLACEHOLDER — never wins this lane, takes the fight anyway"
+      }
+    }
+  }
+}

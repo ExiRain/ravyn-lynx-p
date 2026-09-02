@@ -343,6 +343,12 @@ MY_DEATH = [
           "the cost instead of making a joke.",
           lambda s, e: s.phase == "late"),
 
+    Angle("my_death_told_you",
+          "He warned you about this champion himself, before the game. Say so "
+          "— not smug, just the tone of someone who was listening. Stay inside "
+          "what he actually told you; add no read of your own.",
+          lambda s, e: e.get("killer_has_note", False)),
+
     Angle("my_death_plain",
           "React to the death itself. Disappointed, dismissive, your call.",
           _always),
@@ -460,6 +466,33 @@ ACE = [
 ]
 
 GAME_START = [
+    # These four read from data/champions.json — HIS notes, not game knowledge.
+    # They only fire when he actually wrote something, so an empty file leaves
+    # the generic openers below doing exactly what they did before.
+    Angle("start_matchup_note",
+          "He has told you something about facing one of the champions on the "
+          "enemy team. Open with that — in his voice, as a thing he admits "
+          "rather than a thing you worked out. Do not add a read of your own "
+          "about the matchup.",
+          lambda s, e: e.get("has_matchup_note", False)),
+
+    Angle("start_offrole",
+          "He is playing this champion somewhere he does not normally play "
+          "it, and he has said as much himself. Open on that — indulgent, "
+          "not scathing. He knows.",
+          lambda s, e: e.get("is_offrole", False)),
+
+    Angle("start_champion_history",
+          "He has history with this champion and has told you about it. Bring "
+          "it up as the first thing you say, the way someone brings up a "
+          "pattern they have watched for a while.",
+          lambda s, e: e.get("has_champion_history", False)),
+
+    Angle("start_role_read",
+          "He has told you what he is like in this role. Open on that — his "
+          "own assessment, said back to him.",
+          lambda s, e: e.get("has_role_note", False)),
+
     Angle("start_matchup",
           "The game is starting and you can see both teams. Name what he is "
           "playing and one thing you notice about who he is up against — "

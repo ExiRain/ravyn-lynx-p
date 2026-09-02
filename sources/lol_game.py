@@ -23,6 +23,7 @@ import requests
 import urllib3
 from pathlib import Path
 
+from orchestrator.champion_notes import ChampionNotes
 from orchestrator.game_angles import AngleChooser
 from orchestrator.game_state import GameState
 from orchestrator.models import Signal
@@ -120,6 +121,12 @@ class LolGameSource:
 
         # load quotes
         self._quotes = self._load_quotes(data_dir / "game_quotes.json")
+
+        # What he has told her about his own account — roles, champions,
+        # matchups. Optional: an absent or broken file just disables those
+        # lines. See orchestrator/champion_notes.py.
+        self.notes = ChampionNotes(data_dir / "champions.json")
+        self._read = None       # resolved once per game, at detection
 
     @property
     def is_game_active(self) -> bool:
@@ -249,6 +256,7 @@ class LolGameSource:
         # Seed the state from the detection snapshot so the capture below
         # reports the role it actually resolved, not an empty one.
         self.state.update(data, self._player_team, self._my_names)
+        self._refresh_read()
 
         print(f"[lol]   Enemies: {self._has_real_enemies} | Names: {len(self._name_to_team)}")
         self._log_role_ground_truth(data)
@@ -263,6 +271,29 @@ class LolGameSource:
             print("[lol]   WARNING: active player matched no entry in allPlayers — "
                   "check whether summonerName/riotId match the allPlayers names")
         self._logged_kill_sample = False
+
+    def _has_note_on(self, champion: str) -> bool:
+        """Did he write a matchup note about this specific champion?"""
+        if not self._read or not champion:
+            return False
+        return any(enemy == champion for enemy, _, _ in self._read.matchups)
+
+    def _refresh_read(self) -> None:
+        """Resolve his own notes for this game. Silent when there are none."""
+        previous = self._read
+        self._read = self.notes.read(
+            champion=self.state.champion,
+            role=self.state.position,
+            enemy_champions=self.state.enemy_champions,
+            # Enemy roles are not detectable yet — see champion_notes.read.
+            enemy_roles={},
+        )
+        if self._read and previous is None:
+            print(f"[notes] {self.state.champion or '?'} "
+                  f"{self.state.position or '(role unknown)'}: "
+                  f"{len(self._read.matchups)} matchup note(s), "
+                  f"history={bool(self._read.champion_history)} "
+                  f"offrole={self._read.offrole}")
 
     def _log_role_ground_truth(self, data: dict) -> None:
         """
@@ -311,6 +342,10 @@ class LolGameSource:
 
         self._current_game_time = data.get("gameData", {}).get("gameTime", 0)
         self.state.update(data, self._player_team, self._my_names)
+
+        # Cheap, and it re-resolves once role detection fills in mid-game —
+        # `position` is often empty on the first poll and populated later.
+        self._refresh_read()
 
         # delayed game start
         if not self._game_start_pushed and self._current_game_time > 3.0:
@@ -503,6 +538,7 @@ class LolGameSource:
 
     def _handle_death(self, event: dict):
         killer = event.get("KillerName", "")
+        killer_champion = self._champ(killer)
         self._death_count += 1
         was_trade = self._kills_since_last_death > 0 or self._assists_since_last_death > 0
         self._kills_since_last_death = 0
@@ -516,7 +552,9 @@ class LolGameSource:
             self._push_event("MyDeathRoast",
                 f"Death #{self._death_count}. {seed}",
                 event, "MyDeath",
-                extra_context={"death_count": self._death_count, "mood_spike": -0.6})
+                extra_context={"death_count": self._death_count,
+                               "killer_champion": killer_champion,
+                               "mood_spike": -0.6})
             return
 
         # 1-4 deaths — 50/50
@@ -531,9 +569,16 @@ class LolGameSource:
         else:
             seed = self._pick_quote("deaths", "harsh")
 
-        self._push_event("MyDeath", seed or "You died.",
+        self._push_event("MyDeath",
+            f"{seed or 'You died.'} Killed by {killer_champion}."
+            if killer_champion else (seed or "You died."),
             event, "MyDeath",
-            extra_context={"death_count": self._death_count, "was_trade": was_trade})
+            extra_context={"death_count": self._death_count,
+                           "was_trade": was_trade,
+                           "killer_champion": killer_champion,
+                           # True only when he actually wrote something about
+                           # this champion — never "she knows the matchup".
+                           "killer_has_note": self._has_note_on(killer_champion)})
 
     # ---------------------------------------------------------
     # multikills — immediate
@@ -734,6 +779,17 @@ class LolGameSource:
         situation = self.state.render()
         if situation:
             ctx["situation"] = situation
+
+        # His own notes travel separately from the measured facts, and are
+        # labelled as his in the prompt. §7: she may repeat what he told her,
+        # never extend it into a read of her own.
+        if self._read:
+            ctx["player_notes"] = self._read.render()
+            ctx["has_matchup_note"] = bool(self._read.matchups)
+            ctx["has_champion_history"] = bool(self._read.champion_history)
+            ctx["has_role_note"] = bool(self._read.role_read)
+            ctx["is_offrole"] = self._read.offrole
+            ctx["role_skill"] = self._read.role_skill
 
         angle = self.angles.choose(event_type, self.state, ctx)
         if angle is not None:
