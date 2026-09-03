@@ -40,6 +40,7 @@ from orchestrator.game_angles import (                        # noqa: E402
     ANGLES, MIN_UNCONDITIONAL, AngleChooser, _always,
 )
 from orchestrator.game_state import GameState                # noqa: E402
+from orchestrator.priority_queue import SignalQueue           # noqa: E402
 from orchestrator import game_theme, tone                     # noqa: E402
 
 S = get_settings()
@@ -367,6 +368,71 @@ def test_global_gap():
         lol.random.random = original
 
 
+def test_cheer_and_boo():
+    """
+    The end-of-game noise.
+
+    Deliberately outside every rationing mechanism in the file: a game ends
+    once, so there is nothing for it to be repetitive against, and the moment
+    it lands is the moment it matters. It is a quote rather than a prompt so
+    the sound arrives while the screen is still grey instead of after an LLM
+    round trip and a synthesis.
+    """
+    print("\n--- the cheer and the boo ---")
+    from pathlib import Path
+    from sources.lol_game import LolGameSource
+
+    data = Path(__file__).resolve().parent.parent / "data"
+
+    for won, label in ((True, "win"), (False, "loss")):
+        queue = SignalQueue()
+        source = LolGameSource(queue, data)
+        source._player_summoner, source._player_champion = "exiled", "Riven"
+        source._current_game_time = 2100.0
+        source._last_game_comment = source._current_game_time   # gap wide open
+        source._handle_event({"EventName": "GameEnd",
+                              "Result": "Win" if won else "Lose"}, {})
+
+        first = queue.pop()
+        second = queue.pop()
+
+        check(f"{label}: the noise comes first",
+              first is not None and first.priority == S.CHEER_PRIORITY,
+              str(first.priority) if first else "nothing queued")
+        check(f"{label}: it is the top priority in the system",
+              first.priority == 1 and first.priority < S.OWNER_PRIORITY)
+        check(f"{label}: it skips the LLM entirely",
+              first.skip_llm and first.mode == "quote")
+        check(f"{label}: the voice gate cannot hold it",
+              first.priority <= S.VOICE_INTERRUPT_PRIORITY)
+        check(f"{label}: her face is already doing it",
+              (first.context["mood_spike"] > 0) is won,
+              str(first.context["mood_spike"]))
+        check(f"{label}: it expires rather than arriving late",
+              first.ttl == S.CHEER_TTL, str(first.ttl))
+        check(f"{label}: the event type says which it was",
+              first.context["event_type"] == ("GameCheer" if won else "GameBoo"),
+              first.context["event_type"])
+
+        check(f"{label}: her actual line follows behind it",
+              second is not None and second.context["event_type"] == "GameEnd")
+        check(f"{label}: and that one does go through the LLM",
+              not second.skip_llm)
+        check(f"{label}: which knows the result",
+              second.context.get("won") is won)
+
+    # The noise ignores the throttling that governs everything else.
+    queue = SignalQueue()
+    source = LolGameSource(queue, data)
+    source._player_summoner = "exiled"
+    source._current_game_time = 2100.0
+    source._last_game_comment = 2100.0        # she spoke this instant
+    source._reaction_log = {"GameCheer": [2100.0] * 5}
+    source._handle_event({"EventName": "GameEnd", "Result": "Win"}, {})
+    check("it fires even immediately after another line",
+          queue.pop() is not None)
+
+
 def main():
     test_state()
     test_role_detection()
@@ -376,6 +442,7 @@ def main():
     test_angles_only_fire_on_true_facts()
     test_burst_decay()
     test_global_gap()
+    test_cheer_and_boo()
 
     print()
     if FAILURES:

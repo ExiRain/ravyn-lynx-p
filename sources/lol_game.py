@@ -198,9 +198,6 @@ class LolGameSource:
             return ("The enemy " + taker) if taker else "The enemy", taker
         return "Someone", taker
 
-    def _pick_teammate_name(self) -> str:
-        return self._pick_quote("teammates", "names") or "creatures"
-
     # ---------------------------------------------------------
     # main loop
     # ---------------------------------------------------------
@@ -418,6 +415,41 @@ class LolGameSource:
                   f"history={bool(self._read.champion_history)} "
                   f"offrole={self._read.offrole}")
 
+    def _push_cheer(self, won: bool) -> None:
+        """
+        The immediate reaction to the result — cheer or boo, spoken verbatim.
+
+        Deliberately outside every rationing mechanism in this file. It skips
+        the reaction chance, the burst decay and GAME_MIN_GAP, because a game
+        ends once and there is nothing for it to be repetitive against. At
+        CHEER_PRIORITY it also clears the voice gate: the game just ended, you
+        are probably talking about it already, and that is when the noise is
+        wanted rather than a problem.
+        """
+        line = self._pick_quote("game_state", "cheer" if won else "boo")
+        if not line:
+            line = "Hah! We won." if won else "Boo. We lost."
+
+        self.queue.push(Signal(
+            source="game",
+            priority=settings.CHEER_PRIORITY,
+            text=line,
+            mode="quote",
+            skip_llm=True,          # straight to TTS, no LLM round trip
+            ttl=settings.CHEER_TTL,
+            context={
+                "trigger": "game_event",
+                "game": "league_of_legends",
+                "event_type": "GameCheer" if won else "GameBoo",
+                "player_name": self._player_summoner,
+                "player_champion": self._player_champion,
+                "won": won,
+                # Her face should already be doing it as the sound comes out.
+                "mood_spike": 0.9 if won else -0.8,
+            },
+        ))
+        print(f"[lol] {'CHEER' if won else 'BOO'}: {line}")
+
     def _log_role_ground_truth(self, data: dict) -> None:
         """
         Print what the API actually says about roles, once per game.
@@ -509,12 +541,21 @@ class LolGameSource:
         if name == "GameEnd":
             if self._kill_buffer:
                 self._flush_kills()
-            result = event.get("Result", "")
-            if result == "Win":
-                seed = self._pick_quote("game_state", "game_win")
-            else:
-                seed = self._pick_quote("game_state", "game_loss")
-            self._push_event("GameEnd", seed or "Game over.", event, "GameEnd")
+            won = event.get("Result", "") == "Win"
+
+            # Two signals, in this order and on purpose.
+            #
+            # The cheer or boo goes first as a QUOTE — no LLM — so the noise
+            # lands while the screen is still grey instead of three seconds
+            # later, after a round trip and a synthesis. Her actual line about
+            # the game follows it as an ordinary GameEnd, and the dispatcher's
+            # busy flag guarantees that order without any coordination here.
+            self._push_cheer(won)
+
+            seed = self._pick_quote("game_state",
+                                    "game_win" if won else "game_loss")
+            self._push_event("GameEnd", seed or "Game over.", event, "GameEnd",
+                             extra_context={"won": won})
             self._game_active = False
             return
 
@@ -835,7 +876,6 @@ class LolGameSource:
         i_did_it = self._is_me(killer)
         if struct_name == "inhibitor":
             self.state.record_inhibitor(side)
-        teammate_name = self._pick_teammate_name()
 
         if side == "mine" or not self._has_real_enemies:
             if i_did_it:
@@ -843,7 +883,7 @@ class LolGameSource:
                     f"You destroyed an enemy {struct_name}.", event, event_prefix)
             elif self._has_real_enemies:
                 self._push_event(event_prefix,
-                    f"{teammate_name.capitalize()} knocked down a {struct_name}.",
+                    f"One of Exiled's teammates knocked down a {struct_name}.",
                     event, event_prefix)
             else:
                 self._push_event(event_prefix,

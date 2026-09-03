@@ -234,7 +234,6 @@ def test_who_did_what():
 
 def test_objective_attribution_in_events():
     print("\n--- event text names the taker ---")
-    import random as _random
     import sources.lol_game as lol
 
     src = source()

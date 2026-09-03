@@ -122,6 +122,18 @@ class Settings:
     # to 3 to keep the hold and still beat ordinary chat.
     OWNER_PRIORITY = 2
 
+    # The cheer on a win and the boo on a loss. Priority 1 is the highest
+    # anything uses, so this beats even a sub landing in the same second, and
+    # it is under VOICE_INTERRUPT_PRIORITY so the voice gate does not hold it —
+    # if the game just ended you are probably mid-sentence about it, and that
+    # is exactly when the noise belongs.
+    #
+    # These are `quote` signals: no LLM, straight to TTS, so the sound lands
+    # while the screen is still grey rather than three seconds later. Her
+    # actual line about the game follows behind it as a normal GameEnd.
+    CHEER_PRIORITY = 1
+    CHEER_TTL = 25.0
+
     # --- Language ---
     # Ambient: her own idle voice — silence filler, game reactions, promos.
     # Nobody addressed her, so there is nothing to mirror. Keep this fixed;

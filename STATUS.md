@@ -170,6 +170,7 @@ Two committed suites, both standalone (no pytest, no network):
 - `python tests/test_tone_and_theme.py` — 55 checks: the rulebook case by case,
   the ladder refusing consecutive roasts, and that a theme never becomes a
   prefix
+- `python tests/test_game_variety.py` also covers the cheer and boo
 - `python tests/test_owner.py` — 30 checks: name matching across scripts, that
   his message is never dropped, and that he outranks the queue
 - `python tests/test_language.py` — 51 checks: detection, the asymmetric
@@ -742,10 +743,51 @@ theme rather than a guessed one (§7).
 `game_angles.py` if a particular event feels stale. Adding an angle is a
 three-line change and needs no other edits.
 
-Loose ends: `MyAssist` is routed but never emitted; `teammates.ally_death_multiple`
-is written but never used; the `teammates.names` pool is now only read by
-`_pick_teammate_name`, which nothing calls — either wire it into the persona or
-delete it.
+### The cheer and the boo
+
+A game ends and she reacts to it **before** she has anything thoughtful to say:
+
+```
+[lol] CHEER: Hah! Yes. That is how it is done.     prio 1, quote
+[lol] GameEnd: We won. Obviously.  [end_plain]     prio 2, LLM
+```
+
+Two signals, in that order, and the busy flag guarantees the ordering without
+any coordination. The first is a **quote** — `skip_llm`, straight to TTS — so
+the noise lands while the screen is still grey rather than after an LLM round
+trip and a synthesis. Her actual line follows behind it.
+
+`CHEER_PRIORITY = 1` is the highest anything uses: above a sub, above his own
+chat, and under `VOICE_INTERRUPT_PRIORITY` so **the voice gate does not hold
+it**. If the game just ended you are probably already talking about it, and
+that is exactly when the noise belongs. It also bypasses `REACTION_CHANCE`, the
+burst decay and `GAME_MIN_GAP` — a game ends once, so there is nothing for it
+to be repetitive against.
+
+Pools are `game_state.cheer` and `game_state.boo` in `data/game_quotes.json`.
+They are spoken **verbatim**, so they have to sound like her as written — no
+model is going to rephrase them.
+
+One gap this exposed on the notebook side: quote signals never went near the
+LLM, so nothing set a mood and her face sat neutral through them. The quote
+path applies `mood_spike` now, which is what makes the cheer land as a
+reaction rather than a noise.
+
+### Deleted
+
+Verified unreachable before removal, not assumed:
+
+| Removed | Why |
+|---|---|
+| `TwitchChatSource.add_known_user` | Never called; `known_users` is passed at construction |
+| `GameState.best_ally` | Added alongside `worst_ally` and never used |
+| `SignalQueue.is_empty` | Superseded by `peek()` |
+| `language.letter_count` | Orphaned when `confident()` became asymmetric |
+| `_pick_teammate_name` and the `teammates.names` pool | The collective slang lives in the persona prompt, which carries the identical list. Its last caller was rephrased |
+| `teammates.ally_death_multiple` | Written, never read |
+| unused `numpy` / `get_settings` imports | — |
+
+Loose end: `MyAssist` is routed but never emitted.
 
 ### Champ select
 

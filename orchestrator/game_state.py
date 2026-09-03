@@ -214,11 +214,6 @@ class GameState:
             return None
         return max(scored, key=lambda p: p.deaths - (p.kills + p.assists / 2.0))
 
-    def best_ally(self) -> Player | None:
-        if not self.allies:
-            return None
-        return max(self.allies, key=lambda p: p.kills + p.assists / 2.0 - p.deaths)
-
     def biggest_threat(self) -> Player | None:
         """The enemy who is actually winning the game for them."""
         if not self.enemies:

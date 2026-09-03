@@ -102,15 +102,6 @@ def cyrillic_ratio(text: str) -> float:
     return cyr / total
 
 
-def letter_count(text: str) -> int:
-    """Letters that carry language, after stripping URLs and mentions."""
-    if not text:
-        return 0
-    text = _URL.sub(' ', text)
-    text = _MENTION.sub(' ', text)
-    return len(_CYRILLIC.findall(text)) + len(_LATIN.findall(text))
-
-
 def detect_lang(text: str, fallback: str) -> str:
     """Pick a language from the text itself. Falls back when there's nothing to read."""
     if not text or not text.strip():

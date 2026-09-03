@@ -145,9 +145,6 @@ class TwitchChatSource:
         self._buffer_lock = threading.Lock()
         self._batch_window = BatchWindow()
 
-    def add_known_user(self, user: str):
-        self.known_users.add(user.lower())
-
     def run(self):
         """Entry point — runs in its own thread."""
         channel = settings.TWITCH_CHANNEL
