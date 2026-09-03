@@ -85,7 +85,11 @@ def score_message(user: str, text: str, known_users: set) -> float | None:
     # Exiled does not go through scoring at all any more — see
     # TwitchChatSource._on_message. This bonus is left for the case where the
     # identity file is missing, so he is still favoured rather than ignored.
-    if user.lower() in ("exiled", "exiledr", "exiledra1n"):
+    #
+    # Exact login only. "exiled" and "exiledr" are handles somebody else could
+    # register, and a bonus is the mild version of the same mistake the owner
+    # list makes: it would let an impersonator win batches against real chat.
+    if user.lower() == "exiledra1n":
         score += 8.0
 
     return score

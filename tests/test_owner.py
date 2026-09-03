@@ -73,11 +73,31 @@ def test_shipped_identity_file():
 
     check("his Twitch login is recognised", identity.is_owner_chat("exiledra1n"))
     check("regardless of case", identity.is_owner_chat("ExiledRa1n"))
+    check("and in caps", identity.is_owner_chat("EXILEDRA1N"))
     check("a viewer is not", not identity.is_owner_chat("someviewer"))
     check("an empty name is not", not identity.is_owner_chat(""))
 
+    # A Twitch login is a claim anyone can register. Near-misses must NOT
+    # inherit owner standing: her loyal framing, priority over every game
+    # event, and a bypass of the voice gate. He logs in as one name.
+    #
+    # The underscore cases are the ones that caught me out: Twitch logins may
+    # contain underscores, so the punctuation-stripping normaliser that is
+    # right for League names resolved `exiled_ra1n` to him. Chat matching is
+    # exact, and only the game list stays loose.
+    for impostor in ("exiled", "exiledr", "exiledra1n_", "xexiledra1nx",
+                     "exiled_ra1n", "exiledrain", "exiled ra1n", "exiledra1"):
+        check(f"{impostor!r} is not him", not identity.is_owner_chat(impostor))
+
+    check("surrounding whitespace is still forgiven",
+          identity.is_owner_chat("  exiledra1n  "))
+
+    # The game list stays loose on purpose: it is matched against League event
+    # text on his own machine, where nobody else picks the strings.
     check("his RU League account is recognised",
           identity.is_owner_game("Серый Экран"))
+    check("game matching ignores spacing",
+          identity.is_owner_game("amsterdamghost"))
     check("with a #TAG suffix too",
           identity.is_owner_game("Серый Экран#RU1"))
     check("and his Latin ones", identity.is_owner_game("Amsterdam Ghost"))
@@ -157,6 +177,9 @@ def test_chat_without_identity_is_unchanged():
     check("and the scoring bonus still favours him",
           score_message("exiledra1n", "gg", set())
           > score_message("someviewer", "gg", set()))
+    check("but not a near-miss login",
+          score_message("exiled", "gg", set())
+          == score_message("someviewer", "gg", set()))
 
 
 def main():

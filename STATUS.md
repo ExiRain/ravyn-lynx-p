@@ -415,12 +415,26 @@ places: this file, a hardcoded tuple in `twitch_chat` scoring, and another
 tuple in the notebook's `context_builder` — the last of which could not be
 edited without a deploy.
 
-| List | Used for |
-|---|---|
-| `names` | League accounts. The active player resolves from the API; this is the fallback for *event* names, whose format differs and which have been seen non-Latin |
-| `chat_names` | Twitch login, and voice when it lands. **This is what makes her treat a message as coming from him** |
+| List | Used for | Matched |
+|---|---|---|
+| `names` | League accounts. The active player resolves from the API; this is the fallback for *event* names, whose format differs and which have been seen non-Latin | **Loose** — case, spaces and punctuation ignored, `#TAG` optional |
+| `chat_names` | Twitch login, and voice when it lands. **This is what makes her treat a message as coming from him** | **Exact**, case-insensitive only |
 
-Matching ignores case, spacing and punctuation, and a `#TAG` suffix is optional.
+**The asymmetry is deliberate.** League event text arrives on his own machine
+and nobody else chooses what it says, so forgiving a spacing typo there costs
+nothing. A Twitch login is the opposite: it is a claim anyone can register, and
+owner standing is not small — her loyal framing, priority over every game event,
+and a bypass of the voice gate.
+
+He logs in as **one** name. `exiled` and `exiledr` were in the list and should
+not have been; they are handles somebody else could take. Worse, the loose
+normaliser stripped punctuation, and **Twitch logins may contain underscores** —
+so `exiled_ra1n` and `exiledra1n_` both resolved to him, and either is
+registerable. Chat matching is exact now. Caught by a test.
+
+Mods are deliberately not modelled. If they ever get standing it should be a
+third list with its own framing — "trusted" and "is the streamer" are different
+things.
 
 **It also has to be Unicode-aware, and was not.** The first normaliser used
 `[^a-z0-9]`, which collapses `Серый Экран` to the empty string — so his RU

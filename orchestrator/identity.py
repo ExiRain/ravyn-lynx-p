@@ -15,9 +15,21 @@ Two name lists, because they are genuinely different identities:
   chat_names   Twitch login, and whatever the voice source resolves to when it
                lands. This is the one that decides she is talking to HIM.
 
-Matching ignores case, spaces and punctuation and treats a "#TAG" suffix as
-optional, so a spacing typo in a hand-written file cannot silently cost a
-stream.
+The two lists are matched **differently**, and the asymmetry is deliberate.
+
+  names        Loose. Case, spaces and punctuation are ignored and a "#TAG"
+               suffix is optional, because this is matched against League
+               event text on his own machine — nobody else chooses what it
+               says, and a spacing typo in a hand-written file should not cost
+               a game.
+
+  chat_names   EXACT, case-insensitive only. A Twitch login is a claim anyone
+               can register, and owner standing is not small: her loyal
+               framing, priority over every game event, and a bypass of the
+               voice gate. Loose matching here is an impersonation hole —
+               Twitch logins may contain underscores, so stripping punctuation
+               makes `exiled_ra1n` and `exiledra1n_` both resolve to him, and
+               either is registerable by somebody who is not him.
 """
 
 from __future__ import annotations
@@ -62,10 +74,17 @@ class Identity:
             return
 
         self.game_names = self._names(data.get("names"))
-        self.chat_names = self._names(data.get("chat_names"))
+        self.chat_names = self._exact(data.get("chat_names"))
 
         print(f"[identity] {len(self.game_names)} game name(s), "
               f"{len(self.chat_names)} chat name(s) from {path.name}")
+
+    @staticmethod
+    def _exact(raw) -> set[str]:
+        """Logins, lowercased and nothing else. See is_owner_chat."""
+        if isinstance(raw, str):
+            raw = [raw]
+        return {str(n).strip().lower() for n in (raw or []) if str(n).strip()}
 
     @staticmethod
     def _names(raw) -> set[str]:
@@ -86,8 +105,14 @@ class Identity:
     # ---------------------------------------------------------
 
     def is_owner_chat(self, user: str) -> bool:
-        """Is this chat/voice speaker him?"""
-        return self._matches(user, self.chat_names)
+        """
+        Is this chat/voice speaker him? Exact login, case-insensitive.
+
+        Deliberately NOT normalised: see the module docstring. `exiled_ra1n`
+        is a different person from `exiledra1n`, and Twitch will happily sell
+        somebody the difference.
+        """
+        return bool(user) and user.strip().lower() in self.chat_names
 
     def is_owner_game(self, name: str) -> bool:
         """Is this League event name him?"""
