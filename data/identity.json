@@ -1,0 +1,27 @@
+{
+  "_readme": [
+    "Summoner names that mean Exiled — several accounts, including the RU server.",
+    "",
+    "The active player is normally identified from the Live Client API itself,",
+    "which is reliable. This list is the fallback for EVENT names, where the",
+    "format differs and non-Latin names have already been seen in the wild",
+    "('Your creatures on team болтяра died'). If _is_me fails there, his own",
+    "kills and deaths route as ALLY events and she talks about him in the third",
+    "person while reacting to everything.",
+    "",
+    "Matching ignores case, spaces and punctuation, so typos in spacing do not",
+    "matter. A '#TAG' suffix is optional — both 'Exiled Rain' and",
+    "'Exiled Rain#EUW' match.",
+    "",
+    "Add to this freely. An extra name that is never used costs nothing; a",
+    "missing one costs a whole game of misrouted events."
+  ],
+
+  "names": [
+    "Серый Экран",
+    "Exiled Rain",
+    "Amsterdam Ghost",
+    "Rigid Body",
+    "Stazara"
+  ]
+}

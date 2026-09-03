@@ -532,6 +532,10 @@ GAME_START = [
           "own assessment, said back to him.",
           lambda s, e: e.get("has_role_note", False)),
 
+    Angle("start_theme",
+          "",   # replaced at choose() time by the theme's own opening
+          lambda s, e: bool(e.get("theme_opening"))),
+
     Angle("start_their_threat",
           "Someone on the enemy team is already ahead of everyone. Name them "
           "and their line, nothing more.",
@@ -581,6 +585,64 @@ GAME_END = [
 ]
 
 
+# =============================================================
+# Theme angles — unlocked by orchestrator/game_theme.py
+# =============================================================
+#
+# These are how a theme keeps influencing the game after its opening line
+# without becoming a fixed prefix. The theme does not hand her a sentence; it
+# makes these available, and the chooser rotates them like everything else, so
+# "he cannot move" arrives as four different observations across a game instead
+# of the same clause forty times.
+#
+# They are appended to whatever event list is in play, so a themed game has a
+# wider pool than an unthemed one rather than a redirected one.
+
+THEME_ANGLES = {
+    "theme_jungle_not_trying":
+        "He is in his worst role by his own admission. Frame this as one more "
+        "data point in a case you have been building all game.",
+    "theme_jungle_camps":
+        "Ask, without much hope, whether the jungle is being cleared at all — "
+        "his CS number is right there.",
+
+    "theme_mid_tunnel":
+        "Mid is comfortable, which for him means the rest of the map has "
+        "stopped existing. Point at something happening elsewhere.",
+    "theme_mid_swing":
+        "This role goes very well or very badly for him and rarely between. "
+        "Say which way it is going, using his line.",
+
+    "theme_adc_actually_trying":
+        "He is in the role where he genuinely tries. Acknowledge the effort "
+        "without promising it will work.",
+    "theme_adc_needs_a_team":
+        "Whatever he does here only counts if his team is alive to use it. "
+        "Make that the point.",
+
+    "theme_support_passing_time":
+        "He is passing time with zero effort by his own account, and this is "
+        "consistent with that. Be unimpressed rather than cruel.",
+
+    "theme_top_splitpush":
+        "His best role, and his instinct is to be somewhere the fight is not. "
+        "Note where he is versus where his team is.",
+    "theme_top_comfort":
+        "He knows this role. Hold him to the higher standard that comes with "
+        "it — this is where excuses run out.",
+
+    "theme_cannot_move":
+        "He is melee into a team that can hold him still, which he tagged "
+        "himself. Frame what happened as a movement problem, not a skill one.",
+    "theme_cc_chain":
+        "Count how many of them can stop him moving. It is arithmetic on his "
+        "own tags, so say the number.",
+    "theme_walked_at_them":
+        "His champion has to walk at people to do anything, and walking at "
+        "that team is the whole difficulty. Be sympathetic about it.",
+}
+
+
 ANGLES: dict[str, list[Angle]] = {
     "AllyDeath": ALLY_DEATH,
     "AllyKill": ALLY_KILL,
@@ -628,6 +690,17 @@ class AngleChooser:
             return None
 
         extra = extra or {}
+
+        # A theme widens the pool rather than replacing it: its angles compete
+        # with the situational ones on the same least-recently-used footing, so
+        # the theme colours the game without dominating it.
+        theme_ids = extra.get("theme_angles") or ()
+        if theme_ids:
+            candidates = list(candidates) + [
+                Angle(tid, THEME_ANGLES[tid])
+                for tid in theme_ids if tid in THEME_ANGLES
+            ]
+
         eligible = [a for a in candidates if _safe(a, state, extra)]
         if not eligible:
             return None
@@ -650,6 +723,12 @@ class AngleChooser:
 
         chosen = min(eligible, key=staleness)
         self._recent.append(chosen.id)
+
+        # The theme's opening is written per game, so it is carried in the
+        # context rather than baked into the angle list.
+        if chosen.id == "start_theme":
+            return Angle(chosen.id, extra.get("theme_opening", ""), chosen.when)
+
         return chosen
 
 
