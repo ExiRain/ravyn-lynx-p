@@ -125,7 +125,19 @@ class Settings:
     # "detect" is the one that also works for TTS: it resolves the language
     # BEFORE the LLM runs, so the voice can be told too. With "multilang"
     # you only learn the language from her output.
-    LANG_REPLY = "en"
+    #
+    # Under "detect" a person's language STICKS for the session: the first
+    # message long enough to judge is remembered, and reused for the ones that
+    # are not. Without that a Russian chatter gets Russian for "как дела" and
+    # English for the "+" after it. A later real sentence in the other
+    # language still switches her — someone changing language should be
+    # followed, not corrected.
+    #
+    # Qwen3-TTS speaks Russian natively, so the voice follows. What is NOT
+    # settled is whether the 9B writes her well in Russian, and her persona is
+    # English throughout — banned openers, "fufu", the teammate vocabulary.
+    # None of that survives translation. See §5.
+    LANG_REPLY = "detect"
 
     # Known speakers, lowercase -> language. Overrides LANG_REPLY.
     # e.g. a Russian duo partner in Discord: {"someguy": "ru"}

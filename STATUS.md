@@ -165,6 +165,8 @@ Two committed suites, both standalone (no pytest, no network):
 - `python tests/test_tone_and_theme.py` — 55 checks: the rulebook case by case,
   the ladder refusing consecutive roasts, and that a theme never becomes a
   prefix
+- `python tests/test_language.py` — 51 checks: detection, the asymmetric
+  confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
 
@@ -190,7 +192,31 @@ forget. Split on whether anyone actually spoke to her:
 |---|---|
 | `en` / `ru` | Forced. **`ru` is the Russian test harness.** |
 | `multilang` | The LLM mirrors whoever wrote to her |
-| `detect` | Cyrillic ratio on the message, decided *before* generating |
+| `detect` | Cyrillic ratio on the message, decided *before* generating — **now the default** |
+
+### A person's language sticks
+
+Detection reads one message. Most of chat cannot be judged from one message, so
+a Russian chatter got Russian for "как дела" and English for the "+" after it.
+`SpeakerMemory` remembers the first confident read per name (session only, in
+memory) and reuses it when the current message is too thin.
+
+Judging is **asymmetric**, and that is the interesting part:
+
+| Evidence | Rule | Why |
+|---|---|---|
+| Cyrillic | 2 letters is enough | Nobody types Cyrillic by accident |
+| Latin | ≥4 letters **and** ≥2 words | Twitch chat is full of Latin tokens that mean nothing about the writer |
+
+A length threshold cannot separate an emote from speech — `KEKW` is four
+letters, "hey man" is six. A **word count** can: an emote is one token, a
+sentence is not. Without this, `KEKW`, `LULW`, `Pog`, `monkaS`, `OMEGALUL`,
+`gg`, `ez` and `xd` all read as English and would drag Russian chatters toward
+English one emote at a time. Caught by a test, not by review.
+
+Detection still beats memory: someone who switches language mid-conversation is
+followed, not corrected. Precedence is `Signal.lang` → `SPEAKER_LANG` → ambient
+→ detected → remembered → policy.
 
 `detect` ages better than `multilang`: it resolves before the LLM runs, so the
 TTS can be told too. Threshold is **0.3**, deliberately low — the question is
@@ -199,8 +225,12 @@ Latin slang constantly and Twitch emotes are Latin words.
 
 Precedence: `Signal.lang` → `SPEAKER_LANG` → ambient → `LANG_REPLY`.
 
-**Still untested:** whether the LLM can carry her in Russian at all. Set
-`LANG_REPLY = "ru"`, send chat, listen. Ten minutes, and it gates everything RU.
+**Still untested, and now on by default:** whether the LLM can carry her in
+Russian at all. `LANG_REPLY = "detect"` means a Russian chatter gets Russian
+output the first time one appears — the plumbing is ready, the quality is not
+measured. Qwen3-TTS speaks Russian natively so the voice will follow; what is
+unknown is the 9B's writing. If it reads badly, `LANG_REPLY = "en"` reverts in
+one word.
 
 Her persona is written in English — banned openers, "fufu", the teammate
 vocabulary. None of it survives translation, so Russian currently loses those
