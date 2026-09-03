@@ -11,7 +11,6 @@ import time
 
 from orchestrator.models import Signal
 from orchestrator.priority_queue import SignalQueue
-from app.settings import get_settings
 
 
 FAKE_USERS = [

@@ -1,6 +1,5 @@
 {
   "_note": "Ravyn's game reaction pools. Each entry is either spoken as-is or used as a seed the LLM riffs on. Add more to increase variety.",
-
   "kills": {
     "single": [
       "Clean.",
@@ -30,7 +29,6 @@
       "Even I'm impressed. Almost."
     ]
   },
-
   "deaths": {
     "harsh": [
       "Stop inting.",
@@ -68,7 +66,6 @@
       "They know your name by now. That's not a good thing."
     ]
   },
-
   "objectives": {
     "baron_mine": [
       "Baron secured. Clean.",
@@ -109,15 +106,7 @@
       "A herald. How exciting."
     ]
   },
-
   "teammates": {
-    "names": [
-      "creatures",
-      "these apes",
-      "the animals",
-      "my team, somehow",
-      "those things on your team"
-    ],
     "ally_kill": [
       "Even they get lucky sometimes.",
       "Shocking.",
@@ -130,14 +119,8 @@
       "There goes another one.",
       "Predictable.",
       "Sigh."
-    ],
-    "ally_death_multiple": [
-      "Your creatures are dropping like flies.",
-      "How many of them can die in a row?",
-      "They're competing to see who dies first."
     ]
   },
-
   "game_state": {
     "game_start": [
       "Game started. Focus.",
@@ -156,16 +139,28 @@
       "Disappointing.",
       "That was... rough.",
       "Your creatures let you down. Again."
+    ],
+    "cheer": [
+      "Hah! Yes. That is how it is done.",
+      "We won. Obviously we won.",
+      "Hurray. I mean it, for once.",
+      "There it is. Good.",
+      "Ha! Take that one, then."
+    ],
+    "boo": [
+      "Boooo. Terrible. Awful.",
+      "Boo. That is all I have.",
+      "Ugh. No. Boo.",
+      "Boo. We do not speak of that one.",
+      "Hmph. Boo."
     ]
   },
-
   "teamfight_missed": [
     "A fight happened without you. Your creatures are on their own.",
     "They're fighting and you're... where exactly?",
     "Big fight just happened. You weren't there.",
     "Your team needed you. You were somewhere else."
   ],
-
   "ace": {
     "our_ace": [
       "Aced. Beautiful.",

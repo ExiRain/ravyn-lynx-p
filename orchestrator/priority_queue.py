@@ -54,11 +54,6 @@ class SignalQueue:
                 return heapq.heappop(self._heap)[2]
             return None
 
-    def is_empty(self) -> bool:
-        with self._lock:
-            self._drain_expired()
-            return len(self._heap) == 0
-
     def size(self) -> int:
         with self._lock:
             self._drain_expired()

@@ -161,7 +161,6 @@ class VoiceGate:
     def run(self) -> None:
         """Blocking. Run in a daemon thread."""
         try:
-            import numpy as np
             import sounddevice as sd
             import torch
             from silero_vad import load_silero_vad
