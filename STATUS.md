@@ -127,6 +127,11 @@ silent quote-mode.
 
 ### Bugs found and fixed, worth not reintroducing
 
+- **His chat messages were being thrown away.** Scoring picks one winner per
+  batch and discards the rest, so any viewer message that scored higher than
+  his silently replaced it
+- **An ASCII-only name normaliser dropped his RU account.** `[^a-z0-9]`
+  collapses Cyrillic to the empty string
 - **A 404 from the Live Client API was logged as an error.** It is the normal
   answer when no game is running — the endpoint only exists inside one — and it
   printed `[lol] API error: 404 Client Error` on every startup
@@ -165,6 +170,8 @@ Two committed suites, both standalone (no pytest, no network):
 - `python tests/test_tone_and_theme.py` — 55 checks: the rulebook case by case,
   the ladder refusing consecutive roasts, and that a theme never becomes a
   prefix
+- `python tests/test_owner.py` — 30 checks: name matching across scripts, that
+  his message is never dropped, and that he outranks the queue
 - `python tests/test_language.py` — 51 checks: detection, the asymmetric
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
@@ -402,11 +409,48 @@ behaving exactly as before.
 
 ### Identity — multi-account and RU server
 
-His account names live in **`data/identity.json`** and are his to edit. The
-active player resolves from the API itself, which is reliable; this list is the
-fallback for *event* names, whose format differs and which have already been
-seen non-Latin. Matching ignores case, spacing and punctuation, and the `#TAG`
-suffix is optional, so a spacing typo in the file cannot silently cost a game.
+**`data/identity.json` is the one place he is defined**, loaded by
+`orchestrator/identity.py` and shared by chat and the game source. It was three
+places: this file, a hardcoded tuple in `twitch_chat` scoring, and another
+tuple in the notebook's `context_builder` — the last of which could not be
+edited without a deploy.
+
+| List | Used for |
+|---|---|
+| `names` | League accounts. The active player resolves from the API; this is the fallback for *event* names, whose format differs and which have been seen non-Latin |
+| `chat_names` | Twitch login, and voice when it lands. **This is what makes her treat a message as coming from him** |
+
+Matching ignores case, spacing and punctuation, and a `#TAG` suffix is optional.
+
+**It also has to be Unicode-aware, and was not.** The first normaliser used
+`[^a-z0-9]`, which collapses `Серый Экран` to the empty string — so his RU
+account was never in the set at all. The startup line read *"4 known account
+name(s)"* for a five-name file, which is exactly the sort of off-by-one nobody
+reads. `str.isalnum()` now, which knows about other scripts.
+
+### When it is him talking
+
+He does not compete with chat. Scoring is a contest with **one winner per batch
+and the losers discarded**, not delayed: a viewer's *"hey ravyn, what do you
+think?"* scores 20, his *"gg"* scored 7 even with the owner bonus, so his
+message was silently dropped. He now skips the contest and the batch window
+entirely and goes straight to the queue at `OWNER_PRIORITY` (2), which beats
+every game event and all ordinary chat.
+
+The signal carries `is_owner: True`, and the notebook keys her "this is your
+person" framing off **that flag** rather than pattern-matching his name. The old
+name check survives there only as a fallback for a client that sends no flag.
+
+**One side effect worth knowing:** at priority 2 he also clears
+`VOICE_INTERRUPT_PRIORITY`, so she answers him inside the post-speech hold. That
+is the intent — he typed at her deliberately — but if he types and then
+immediately starts talking, she will speak over him. `OWNER_PRIORITY = 3` keeps
+the hold and still beats ordinary chat.
+
+Voice will need nothing new: set `context["user"]` and `context["is_owner"]`
+exactly as chat does, and it gets the same framing, the same priority and the
+same per-person memory buffer. `source="voice"` is already routed alongside
+`"chat"` in the notebook.
 
 
 Several accounts including the RU server, so events carry names she does not

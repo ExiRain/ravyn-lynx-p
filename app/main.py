@@ -21,6 +21,7 @@ from pathlib import Path
 from threading import Thread
 
 from app.settings import get_settings
+from orchestrator.identity import Identity
 from orchestrator.priority_queue import SignalQueue
 from orchestrator.dispatcher import Dispatcher
 from sources.silence_filler import SilenceFiller
@@ -59,6 +60,10 @@ def main():
     # --- Orchestrator core ---
     # Built first: the response listener clears its busy flag, so it needs
     # the dispatcher to exist before it starts consuming.
+    # Who he is, loaded once and shared by chat and the game source. It used
+    # to be three separate hardcoded lists.
+    identity = Identity(DATA_DIR / "identity.json")
+
     queue = SignalQueue()
     dispatcher = Dispatcher(queue)
 
@@ -118,7 +123,7 @@ def main():
     lol = None
     if not NO_LOL and not TEST_MODE:
         from sources.lol_game import LolGameSource
-        lol = LolGameSource(queue, DATA_DIR)
+        lol = LolGameSource(queue, DATA_DIR, identity=identity)
 
         def _sync_game(signal):
             if lol:
@@ -130,7 +135,7 @@ def main():
     # --- Twitch ---
     if not NO_TWITCH and not TEST_MODE:
         from sources.twitch_chat import TwitchChatSource
-        twitch = TwitchChatSource(queue)
+        twitch = TwitchChatSource(queue, identity=identity)
         Thread(target=twitch.run, daemon=True, name="twitch-chat").start()
 
     # --- Mock ---

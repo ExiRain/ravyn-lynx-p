@@ -110,6 +110,18 @@ class Settings:
     # --- Twitch ---
     TWITCH_CHANNEL = "exiledra1n"
 
+    # When Exiled himself types (or, later, speaks), his message does not
+    # compete with chat. It skips the batch contest entirely — otherwise a
+    # viewer's "hey ravyn, what do you think?" (score 20) beats his "gg"
+    # (score 7) and HIS MESSAGE IS DISCARDED, not merely delayed.
+    #
+    # At 2 this also clears VOICE_INTERRUPT_PRIORITY, so she answers him even
+    # inside the post-speech hold. That is the intent — he typed at her
+    # deliberately — but it is the one side effect worth knowing about: if you
+    # type and then immediately start talking, she will speak over you. Raise
+    # to 3 to keep the hold and still beat ordinary chat.
+    OWNER_PRIORITY = 2
+
     # --- Language ---
     # Ambient: her own idle voice — silence filler, game reactions, promos.
     # Nobody addressed her, so there is nothing to mirror. Keep this fixed;

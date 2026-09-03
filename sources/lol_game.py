@@ -24,7 +24,8 @@ import urllib3
 from pathlib import Path
 
 from orchestrator import game_theme, tone as tone_engine
-from orchestrator.champion_notes import ChampionNotes, key as champ_key
+from orchestrator.champion_notes import ChampionNotes
+from orchestrator.identity import Identity
 from orchestrator.game_angles import AngleChooser
 from orchestrator.game_state import GameState
 from orchestrator.models import Signal
@@ -75,7 +76,7 @@ EVENT_CONFIG = {
 
 class LolGameSource:
 
-    def __init__(self, queue: SignalQueue, data_dir: Path):
+    def __init__(self, queue: SignalQueue, data_dir: Path, identity=None):
         self.queue = queue
         self._running = True
         self._last_event_index = 0
@@ -132,8 +133,9 @@ class LolGameSource:
         self._read = None       # resolved once per game, at detection
 
         # His other accounts, for matching EVENT names where the format
-        # differs from allPlayers. See data/identity.json.
-        self._known_names = self._load_known_names(data_dir / "identity.json")
+        # differs from allPlayers. One loader, shared with chat — see
+        # orchestrator/identity.py.
+        self.identity = identity or Identity(data_dir / "identity.json")
 
         # How hard she goes, and the shape of this particular game.
         self.tones = tone_engine.ToneLadder()
@@ -389,28 +391,6 @@ class LolGameSource:
         self._my_names = {n.lower() for n in
                           (self._player_summoner, self._player_riot_id,
                            self._player_champion) if n}
-
-    @staticmethod
-    def _load_known_names(path) -> set[str]:
-        """His other accounts, normalised for loose matching."""
-        if not path.exists():
-            return set()
-        try:
-            import json as _json
-            with open(path, "r", encoding="utf-8") as f:
-                names = (_json.load(f) or {}).get("names") or []
-        except Exception as e:
-            print(f"[lol] Could not read {path.name}: {e}")
-            return set()
-
-        out = set()
-        for name in names:
-            normalised = champ_key(name)
-            if normalised:
-                out.add(normalised)
-        if out:
-            print(f"[lol] {len(out)} known account name(s) from {path.name}")
-        return out
 
     def _has_note_on(self, champion: str) -> bool:
         """Did he write a matchup note about this specific champion?"""
@@ -913,15 +893,8 @@ class LolGameSource:
             return True
 
         # Fallback for EVENT names, whose format differs from allPlayers and
-        # which have already been seen non-Latin in the wild. Punctuation and
-        # spacing are ignored, and a "#TAG" suffix is optional, so a typo in
-        # spacing in the hand-written list does not silently cost a game.
-        if not self._known_names:
-            return False
-        normalised = champ_key(name)
-        short = champ_key(name.split("#")[0]) if "#" in name else ""
-        return normalised in self._known_names or (
-            bool(short) and short in self._known_names)
+        # which have already been seen non-Latin in the wild.
+        return self.identity.is_owner_game(name)
 
     def _classify_killer(self, killer_name: str) -> str:
         if not killer_name:

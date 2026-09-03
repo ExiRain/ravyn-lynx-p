@@ -1,27 +1,36 @@
 {
   "_readme": [
-    "Summoner names that mean Exiled — several accounts, including the RU server.",
+    "Who Exiled is. Two lists, because they are different identities.",
     "",
-    "The active player is normally identified from the Live Client API itself,",
-    "which is reliable. This list is the fallback for EVENT names, where the",
-    "format differs and non-Latin names have already been seen in the wild",
-    "('Your creatures on team болтяра died'). If _is_me fails there, his own",
-    "kills and deaths route as ALLY events and she talks about him in the third",
-    "person while reacting to everything.",
+    "  names        League accounts, including the RU server. The active player",
+    "               normally resolves from the Live Client API, which is",
+    "               reliable; this list is the fallback for EVENT names, whose",
+    "               format differs and which have already been seen non-Latin",
+    "               ('Your creatures on team болтяра died'). When _is_me fails",
+    "               there his own kills and deaths route as ALLY events, and she",
+    "               talks about him in the third person while reacting to",
+    "               everything.",
     "",
-    "Matching ignores case, spaces and punctuation, so typos in spacing do not",
-    "matter. A '#TAG' suffix is optional — both 'Exiled Rain' and",
-    "'Exiled Rain#EUW' match.",
+    "  chat_names   Twitch login, and whatever the voice source resolves to.",
+    "               THIS is the list that decides she is talking to HIM rather",
+    "               than to a viewer: it selects the CHAT_EXILED framing, gives",
+    "               his message OWNER_PRIORITY, and stops it being dropped when",
+    "               a viewer's message scores higher in the same batch.",
     "",
-    "Add to this freely. An extra name that is never used costs nothing; a",
-    "missing one costs a whole game of misrouted events."
+    "Matching ignores case, spaces and punctuation, and a '#TAG' suffix is",
+    "optional — both 'Exiled Rain' and 'Exiled Rain#EUW' match. Add freely; an",
+    "unused name costs nothing, a missing one costs a whole stream."
   ],
-
   "names": [
     "Серый Экран",
     "Exiled Rain",
     "Amsterdam Ghost",
     "Rigid Body",
     "Stazara"
+  ],
+  "chat_names": [
+    "exiledra1n",
+    "exiled",
+    "exiledr"
   ]
 }
