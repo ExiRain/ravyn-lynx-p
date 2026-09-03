@@ -29,9 +29,20 @@
     "reaches the model, and the angle that would have used it does not fire.",
     "The startup log says how many are still waiting. This is deliberate: on",
     "the first live run the example text went straight to the LLM and she",
-    "opened a game trying to make sense of the word PLACEHOLDER out loud."
+    "opened a game trying to make sense of the word PLACEHOLDER out loud.",
+    "",
+    "TAGS drive the game theme (orchestrator/game_theme.py). Tag your own",
+    "champions with 'melee' or 'immobile', and enemy champions you consider",
+    "hard to play against with 'heavy_cc'. When you are on a melee champion",
+    "and three or more of their team are tagged heavy_cc, the game gets an",
+    "'immobile' theme: she becomes more forgiving and gains angles about not",
+    "being allowed to move. This is arithmetic on YOUR tags, never her opinion",
+    "about a matchup — untagged champions count for nothing.",
+    "",
+    "The theme is a DISPOSITION, not a sentence. It supplies one opening line",
+    "at game start and after that only shifts her tone and unlocks extra",
+    "angles, so it colours the game without becoming a prefix she repeats."
   ],
-
   "roles": {
     "top": {
       "skill": "best",
@@ -54,7 +65,6 @@
       "read": "PLACEHOLDER — passing time, zero effort"
     }
   },
-
   "champions": {
     "Riven": {
       "main_role": "top",
@@ -62,7 +72,16 @@
       "offrole_read": "PLACEHOLDER — still learning her anywhere but top",
       "matchups": {
         "Garen": "PLACEHOLDER — never wins this lane, takes the fight anyway"
-      }
+      },
+      "tags": [
+        "melee"
+      ]
+    },
+    "Garen": {
+      "tags": [
+        "heavy_cc"
+      ],
+      "_note": "EXAMPLE of an enemy tag — keep, edit or delete."
     }
   }
 }

@@ -1,0 +1,45 @@
+{
+  "_readme": [
+    "Who Exiled is. Two lists, because they are different identities.",
+    "",
+    "  names        League accounts, including the RU server. The active player",
+    "               normally resolves from the Live Client API, which is",
+    "               reliable; this list is the fallback for EVENT names, whose",
+    "               format differs and which have already been seen non-Latin",
+    "               ('Your creatures on team болтяра died'). When _is_me fails",
+    "               there his own kills and deaths route as ALLY events, and she",
+    "               talks about him in the third person while reacting to",
+    "               everything.",
+    "",
+    "  chat_names   Twitch logins that are HIM. This is what selects the",
+    "               CHAT_EXILED framing, gives his message OWNER_PRIORITY, and",
+    "               stops it being dropped when a viewer's message scores",
+    "               higher in the same batch.",
+    "",
+    "KEEP chat_names EXACT. A Twitch login is a claim anyone can register:",
+    "'exiled' and 'exiledr' are not his, they are handles somebody else could",
+    "take, and listing them would hand that person owner privileges — her",
+    "loyal framing, priority over every game event, and a bypass of the voice",
+    "gate. Only add a name he actually owns and logs in as. Matching is",
+    "case-insensitive, so 'Exiledra1n' and 'EXILEDRA1N' are covered without",
+    "listing them.",
+    "",
+    "The `names` list is looser on purpose and safely so: it is matched against",
+    "League event text on his own machine, where nobody else can choose what it",
+    "says.",
+    "",
+    "(Mods are deliberately not modelled. If they ever get their own standing",
+    "it should be a third list with its own framing, not an entry here —",
+    "'trusted' and 'is the streamer' are different things.)"
+  ],
+  "names": [
+    "Серый Экран",
+    "Exiled Rain",
+    "Amsterdam Ghost",
+    "Rigid Body",
+    "Stazara"
+  ],
+  "chat_names": [
+    "exiledra1n"
+  ]
+}

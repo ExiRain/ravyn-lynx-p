@@ -127,6 +127,14 @@ silent quote-mode.
 
 ### Bugs found and fixed, worth not reintroducing
 
+- **His chat messages were being thrown away.** Scoring picks one winner per
+  batch and discards the rest, so any viewer message that scored higher than
+  his silently replaced it
+- **An ASCII-only name normaliser dropped his RU account.** `[^a-z0-9]`
+  collapses Cyrillic to the empty string
+- **A 404 from the Live Client API was logged as an error.** It is the normal
+  answer when no game is running — the endpoint only exists inside one — and it
+  printed `[lol] API error: 404 Client Error` on every startup
 - **Shipped PLACEHOLDER text reached the model.** `data/champions.json` ships as
   a template, and its example strings went down the same path as real notes. She
   opened a game with *"That only when a friend duos comment? It sounds like
@@ -159,6 +167,13 @@ Two committed suites, both standalone (no pytest, no network):
 - `python tests/test_champion_notes.py` — 42 checks: lookup, off-role, how
   confidently a lane is claimed, labelling, and that note angles stay silent
   when nothing is written
+- `python tests/test_tone_and_theme.py` — 55 checks: the rulebook case by case,
+  the ladder refusing consecutive roasts, and that a theme never becomes a
+  prefix
+- `python tests/test_owner.py` — 30 checks: name matching across scripts, that
+  his message is never dropped, and that he outranks the queue
+- `python tests/test_language.py` — 51 checks: detection, the asymmetric
+  confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
 
@@ -184,7 +199,31 @@ forget. Split on whether anyone actually spoke to her:
 |---|---|
 | `en` / `ru` | Forced. **`ru` is the Russian test harness.** |
 | `multilang` | The LLM mirrors whoever wrote to her |
-| `detect` | Cyrillic ratio on the message, decided *before* generating |
+| `detect` | Cyrillic ratio on the message, decided *before* generating — **now the default** |
+
+### A person's language sticks
+
+Detection reads one message. Most of chat cannot be judged from one message, so
+a Russian chatter got Russian for "как дела" and English for the "+" after it.
+`SpeakerMemory` remembers the first confident read per name (session only, in
+memory) and reuses it when the current message is too thin.
+
+Judging is **asymmetric**, and that is the interesting part:
+
+| Evidence | Rule | Why |
+|---|---|---|
+| Cyrillic | 2 letters is enough | Nobody types Cyrillic by accident |
+| Latin | ≥4 letters **and** ≥2 words | Twitch chat is full of Latin tokens that mean nothing about the writer |
+
+A length threshold cannot separate an emote from speech — `KEKW` is four
+letters, "hey man" is six. A **word count** can: an emote is one token, a
+sentence is not. Without this, `KEKW`, `LULW`, `Pog`, `monkaS`, `OMEGALUL`,
+`gg`, `ez` and `xd` all read as English and would drag Russian chatters toward
+English one emote at a time. Caught by a test, not by review.
+
+Detection still beats memory: someone who switches language mid-conversation is
+followed, not corrected. Precedence is `Signal.lang` → `SPEAKER_LANG` → ambient
+→ detected → remembered → policy.
 
 `detect` ages better than `multilang`: it resolves before the LLM runs, so the
 TTS can be told too. Threshold is **0.3**, deliberately low — the question is
@@ -193,8 +232,12 @@ Latin slang constantly and Twitch emotes are Latin words.
 
 Precedence: `Signal.lang` → `SPEAKER_LANG` → ambient → `LANG_REPLY`.
 
-**Still untested:** whether the LLM can carry her in Russian at all. Set
-`LANG_REPLY = "ru"`, send chat, listen. Ten minutes, and it gates everything RU.
+**Still untested, and now on by default:** whether the LLM can carry her in
+Russian at all. `LANG_REPLY = "detect"` means a Russian chatter gets Russian
+output the first time one appears — the plumbing is ready, the quality is not
+measured. Qwen3-TTS speaks Russian natively so the voice will follow; what is
+unknown is the 9B's writing. If it reads badly, `LANG_REPLY = "en"` reverts in
+one word.
 
 Her persona is written in English — banned openers, "fufu", the teammate
 vocabulary. None of it survives translation, so Russian currently loses those
@@ -365,6 +408,64 @@ gated on a note actually existing, so an empty file leaves the generic openers
 behaving exactly as before.
 
 ### Identity — multi-account and RU server
+
+**`data/identity.json` is the one place he is defined**, loaded by
+`orchestrator/identity.py` and shared by chat and the game source. It was three
+places: this file, a hardcoded tuple in `twitch_chat` scoring, and another
+tuple in the notebook's `context_builder` — the last of which could not be
+edited without a deploy.
+
+| List | Used for | Matched |
+|---|---|---|
+| `names` | League accounts. The active player resolves from the API; this is the fallback for *event* names, whose format differs and which have been seen non-Latin | **Loose** — case, spaces and punctuation ignored, `#TAG` optional |
+| `chat_names` | Twitch login, and voice when it lands. **This is what makes her treat a message as coming from him** | **Exact**, case-insensitive only |
+
+**The asymmetry is deliberate.** League event text arrives on his own machine
+and nobody else chooses what it says, so forgiving a spacing typo there costs
+nothing. A Twitch login is the opposite: it is a claim anyone can register, and
+owner standing is not small — her loyal framing, priority over every game event,
+and a bypass of the voice gate.
+
+He logs in as **one** name. `exiled` and `exiledr` were in the list and should
+not have been; they are handles somebody else could take. Worse, the loose
+normaliser stripped punctuation, and **Twitch logins may contain underscores** —
+so `exiled_ra1n` and `exiledra1n_` both resolved to him, and either is
+registerable. Chat matching is exact now. Caught by a test.
+
+Mods are deliberately not modelled. If they ever get standing it should be a
+third list with its own framing — "trusted" and "is the streamer" are different
+things.
+
+**It also has to be Unicode-aware, and was not.** The first normaliser used
+`[^a-z0-9]`, which collapses `Серый Экран` to the empty string — so his RU
+account was never in the set at all. The startup line read *"4 known account
+name(s)"* for a five-name file, which is exactly the sort of off-by-one nobody
+reads. `str.isalnum()` now, which knows about other scripts.
+
+### When it is him talking
+
+He does not compete with chat. Scoring is a contest with **one winner per batch
+and the losers discarded**, not delayed: a viewer's *"hey ravyn, what do you
+think?"* scores 20, his *"gg"* scored 7 even with the owner bonus, so his
+message was silently dropped. He now skips the contest and the batch window
+entirely and goes straight to the queue at `OWNER_PRIORITY` (2), which beats
+every game event and all ordinary chat.
+
+The signal carries `is_owner: True`, and the notebook keys her "this is your
+person" framing off **that flag** rather than pattern-matching his name. The old
+name check survives there only as a fallback for a client that sends no flag.
+
+**One side effect worth knowing:** at priority 2 he also clears
+`VOICE_INTERRUPT_PRIORITY`, so she answers him inside the post-speech hold. That
+is the intent — he typed at her deliberately — but if he types and then
+immediately starts talking, she will speak over him. `OWNER_PRIORITY = 3` keeps
+the hold and still beats ordinary chat.
+
+Voice will need nothing new: set `context["user"]` and `context["is_owner"]`
+exactly as chat does, and it gets the same framing, the same priority and the
+same per-person memory buffer. `source="voice"` is already routed alongside
+`"chat"` in the notebook.
+
 
 Several accounts including the RU server, so events carry names she does not
 recognise. Confirmed live: `Your creatures on team болтяра died`.
@@ -574,6 +675,66 @@ in one fight now produce one comment.
 
 **3. No roles, so lanes were guesswork.** Fixed by `position` — see §7 "Role
 detection".
+
+### Tone — how hard she goes
+
+The streamer's rulebook, in `orchestrator/tone.py`:
+
+| Situation | Tone | She comments |
+|---|---|---|
+| 1st death, traded for a kill | warm | 50% — saying nothing *is* the reaction |
+| deaths 2–5, traded something | light / dry | ~70% |
+| dying for free (no kills, no assists) | **roast** | 90% |
+| death 6 onward | roast / sharp + lecture | always |
+| …unless it bought **2+ kills** (not assists) | warm, surprised | always |
+| an objective he was in on, 0 kills of his own | light or dry, genuinely split | 75% |
+
+**A verdict owns its reaction chance.** The generic burst decay used to
+multiply it as well, so a sixth death the rulebook says always lands was
+arriving at 55%. Caught in simulation.
+
+**The top of the ladder cannot repeat.** From the session: *"FULL ROAST only
+makes her repeat herself on the 2nd message."* A tone is a narrow instruction,
+and asking a 9B model for two maximum-heat roasts back to back gets the same
+roast twice. `ToneLadder` steps down after a roast and never issues the same
+harsh tone consecutively — the heat returns on the death after next, which also
+makes it land harder. Warm is exempt: two pleased reactions do not grate, and
+pulling her off warm would read as withdrawing approval for no reason.
+
+Tone is deliberately **separate from the angle**. The angle says *what to talk
+about*, the tone says *how warm to be about it*, and multiplying them is where
+the variety lives — five tones across ~119 angles, rather than one fixed
+instruction per event type.
+
+### Theme — a disposition, never a sentence
+
+From the meta notes: a game where he is Riven mid into a CC-heavy comp should
+have a *theme* — "how can I play, how can I move" — colouring everything.
+
+From the session after: *"the theme sentence 'he's not even trying' was like an
+entry message that never changed within one game, and such a prefix became
+annoying quite fast."*
+
+Both are right, and the second is why `orchestrator/game_theme.py` emits **no
+text after its opening line**. A theme is derived from facts that do not change
+during a game, so anything textual it produces is the same words forty times.
+Instead it does three things:
+
+1. One opening instruction, used at GameStart and never again
+2. Shifts the tone ladder a step (jungle `+1` harsher, bot `-1` softer, immobile
+   `-1` — that one is not his fault)
+3. Unlocks extra angles, which the chooser rotates like any others
+
+The third is the trick. *"He is immobile into a team that can chain him"* is not
+a line she says; it is a reason certain observations become available, and the
+anti-repetition machinery still decides which she reaches for. `theme_cannot_move`,
+`theme_cc_chain` and `theme_walked_at_them` are three different remarks about
+one underlying fact.
+
+The comp theme needs **his** tags — `melee` on his champions, `heavy_cc` on
+theirs, in `data/champions.json`. Three tagged enemies is the threshold.
+Untagged champions count for nothing, so an unwritten file produces no comp
+theme rather than a guessed one (§7).
 
 **Tuning, in order:** `GAME_MIN_GAP` if she still talks too continuously;
 `REACTION_CHANCE` per event if she talks too much;

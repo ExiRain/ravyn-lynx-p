@@ -40,6 +40,7 @@ from orchestrator.game_angles import (                        # noqa: E402
     ANGLES, MIN_UNCONDITIONAL, AngleChooser, _always,
 )
 from orchestrator.game_state import GameState                # noqa: E402
+from orchestrator import game_theme, tone                     # noqa: E402
 
 S = get_settings()
 FAILURES: list[str] = []
@@ -331,6 +332,8 @@ def test_global_gap():
     source._read = None
     source._player_summoner = "exiled"
     source._player_champion = "Riven"
+    source.theme = game_theme.NO_THEME
+    source.tones = tone.ToneLadder()
     pushed = []
     source.queue = types.SimpleNamespace(push=pushed.append)
 

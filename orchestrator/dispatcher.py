@@ -31,6 +31,9 @@ class Dispatcher:
         self.busy = False
         self._busy_since = 0.0
         self._inflight: Signal | None = None
+        # Which language each chatter writes in, for this session. Detection
+        # sees one message at a time, and half of chat is too short to judge.
+        self.speakers = language.SpeakerMemory()
         self._busy_lock = threading.Lock()
         self._on_dispatch_callbacks: list = []
         self._running = True
@@ -179,6 +182,7 @@ class Dispatcher:
             ambient=s.LANG_AMBIENT,
             reply_policy=s.LANG_REPLY,
             speaker_langs=s.SPEAKER_LANG,
+            remembered=self.speakers,
         )
 
     def _dispatch(self, signal: Signal, channel) -> None:

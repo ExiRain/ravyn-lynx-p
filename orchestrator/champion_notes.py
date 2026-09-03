@@ -129,6 +129,21 @@ class ChampionNotes:
         if path is not None:
             self.load(path)
 
+    def tags(self, champion: str) -> set[str]:
+        """
+        His tags for a champion — "melee", "heavy_cc", whatever he writes.
+
+        Used by orchestrator/game_theme.py to do arithmetic on HIS data rather
+        than form an opinion about a matchup (STATUS.md §7). An untagged
+        champion returns nothing and contributes nothing, which is why an
+        unwritten file produces no comp theme instead of a guessed one.
+        """
+        entry = self.champions.get(key(champion)) or {}
+        raw = entry.get("tags") or []
+        if isinstance(raw, str):
+            raw = [raw]
+        return {str(t).lower() for t in raw if t and not is_placeholder(str(t))}
+
     def load(self, path: Path) -> None:
         if not path.exists():
             print(f"[notes] No {path.name} — role and champion lines disabled")

@@ -82,8 +82,14 @@ def score_message(user: str, text: str, known_users: set) -> float | None:
     if user.lower() in known_users:
         score += 1.0
 
-    # exiled always gets attention
-    if user.lower() in ("exiled", "exiledr","exiledra1n"):
+    # Exiled does not go through scoring at all any more — see
+    # TwitchChatSource._on_message. This bonus is left for the case where the
+    # identity file is missing, so he is still favoured rather than ignored.
+    #
+    # Exact login only. "exiled" and "exiledr" are handles somebody else could
+    # register, and a bonus is the mild version of the same mistake the owner
+    # list makes: it would let an impersonator win batches against real chat.
+    if user.lower() == "exiledra1n":
         score += 8.0
 
     return score
@@ -127,9 +133,13 @@ class TwitchChatSource:
     TTL = 120.0
     MAX_CONTEXT_MESSAGES = 3
 
-    def __init__(self, queue: SignalQueue, known_users: set = None):
+    def __init__(self, queue: SignalQueue, known_users: set = None,
+                 identity=None):
         self.queue = queue
         self.known_users = known_users or set()
+        # Who the owner is. None means nobody is treated as owner, and chat
+        # behaves exactly as it did before.
+        self.identity = identity
         self._running = True
         self._buffer: list[ScoredMessage] = []
         self._buffer_lock = threading.Lock()
@@ -223,8 +233,22 @@ class TwitchChatSource:
         except Exception:
             pass
 
+    def _is_owner(self, user: str) -> bool:
+        return bool(self.identity and self.identity.is_owner_chat(user))
+
     def _on_message(self, user: str, text: str):
         self._batch_window.record_message()
+
+        # His messages bypass the contest AND the batch window.
+        #
+        # Scoring is a contest with one winner and the losers are thrown away,
+        # so a viewer asking "hey ravyn, what do you think?" (10 + 5 + 3 + 2)
+        # beat his "gg" (8 - 1) and his message was silently dropped. Waiting
+        # out the batch window on top of that is latency he has no reason to
+        # pay: he is one person, not a flood to be sampled.
+        if self._is_owner(user):
+            self._push_owner(user, text)
+            return
 
         score = score_message(user, text, self.known_users)
         if score is None:
@@ -236,6 +260,32 @@ class TwitchChatSource:
             self._buffer.append(msg)
 
         print(f"[twitch] {user} (score={score:.1f}): {text[:60]}")
+
+    def _push_owner(self, user: str, text: str):
+        """Straight to the queue, at OWNER_PRIORITY, never dropped."""
+        with self._buffer_lock:
+            context_msgs = [f"{m.user}: {m.text}"
+                            for m in self._buffer[-self.MAX_CONTEXT_MESSAGES:]]
+
+        self.queue.push(Signal(
+            source="chat",
+            priority=settings.OWNER_PRIORITY,
+            text=text,
+            mode="improv",
+            skip_llm=False,
+            ttl=self.TTL,
+            context={
+                "trigger": "chat_message",
+                "user": user,
+                # Authoritative. The notebook keys her "this is your person"
+                # framing off this rather than pattern-matching his name, so
+                # the answer lives in one file on one machine.
+                "is_owner": True,
+                "recent_chat": context_msgs,
+                "batch_size": 1,
+            },
+        ))
+        print(f"[twitch] OWNER {user}: {text[:60]}")
 
     def _batch_processor(self):
         """Periodically flush buffer, pick best message, push signal."""
@@ -270,6 +320,7 @@ class TwitchChatSource:
                 context={
                     "trigger": "chat_message",
                     "user": winner.user,
+                    "is_owner": False,
                     "recent_chat": context_msgs,
                     "batch_size": len(batch),
                 },

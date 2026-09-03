@@ -23,7 +23,9 @@ import requests
 import urllib3
 from pathlib import Path
 
+from orchestrator import game_theme, tone as tone_engine
 from orchestrator.champion_notes import ChampionNotes
+from orchestrator.identity import Identity
 from orchestrator.game_angles import AngleChooser
 from orchestrator.game_state import GameState
 from orchestrator.models import Signal
@@ -74,7 +76,7 @@ EVENT_CONFIG = {
 
 class LolGameSource:
 
-    def __init__(self, queue: SignalQueue, data_dir: Path):
+    def __init__(self, queue: SignalQueue, data_dir: Path, identity=None):
         self.queue = queue
         self._running = True
         self._last_event_index = 0
@@ -129,6 +131,15 @@ class LolGameSource:
         # lines. See orchestrator/champion_notes.py.
         self.notes = ChampionNotes(data_dir / "champions.json")
         self._read = None       # resolved once per game, at detection
+
+        # His other accounts, for matching EVENT names where the format
+        # differs from allPlayers. One loader, shared with chat — see
+        # orchestrator/identity.py.
+        self.identity = identity or Identity(data_dir / "identity.json")
+
+        # How hard she goes, and the shape of this particular game.
+        self.tones = tone_engine.ToneLadder()
+        self.theme = game_theme.NO_THEME
 
     @property
     def is_game_active(self) -> bool:
@@ -250,6 +261,8 @@ class LolGameSource:
 
         self.state = GameState()
         self.angles.reset()
+        self.tones.reset()
+        self.theme = game_theme.NO_THEME
         self._ally_deaths = {}
         self._recent_ally_deaths = []
         self._reaction_log = {}
@@ -266,6 +279,17 @@ class LolGameSource:
         # reports the role it actually resolved, not an empty one.
         self.state.update(data, self._player_team, self._my_names)
         self._refresh_read()
+
+        self.theme = game_theme.resolve(
+            role=self.state.position,
+            champion=self.state.champion,
+            enemy_champions=self.state.enemy_champions,
+            champion_tags=self.notes.tags,
+        )
+        if self.theme:
+            print(f"[lol]   Theme: {self.theme.id} "
+                  f"(tone {self.theme.tone_shift:+d}, "
+                  f"{len(self.theme.angles)} extra angles)")
 
         print(f"[lol]   Enemies: {self._has_real_enemies} | "
               f"Names: {len(self._name_to_team)}")
@@ -449,7 +473,11 @@ class LolGameSource:
         # delayed game start
         if not self._game_start_pushed and self._current_game_time > 3.0:
             seed = self._pick_quote("game_state", "game_start")
-            self._push_event("GameStart", seed or "Game started.", {}, "GameStart")
+            # The theme's ONE sentence, used here and never again.
+            self._push_event("GameStart", seed or "Game started.", {},
+                             "GameStart",
+                             extra_context={"theme_opening": self.theme.opening,
+                                            "theme_id": self.theme.id})
             self._game_start_pushed = True
 
         events = data.get("events", {}).get("Events", [])
@@ -646,48 +674,76 @@ class LolGameSource:
     # ---------------------------------------------------------
 
     def _handle_death(self, event: dict):
+        """
+        The streamer's rulebook, in orchestrator/tone.py. Two things happen
+        here that did not before.
+
+        The reaction chance now comes from the death itself rather than a flat
+        coin flip: a first death he traded for a kill is half ignored, dying
+        for free almost always lands, and from six onward she always says
+        something. And the tone is chosen from what the death bought, then run
+        through the ladder, which refuses to roast twice in a row — asking a 9B
+        model for two maximum-heat roasts back to back gets the same roast
+        twice, which is what "FULL ROAST only makes her repeat herself on the
+        2nd message" was.
+        """
         killer = event.get("KillerName", "")
         killer_champion = self._champ(killer)
         self._death_count += 1
-        was_trade = self._kills_since_last_death > 0 or self._assists_since_last_death > 0
+
+        kills_traded = self._kills_since_last_death
+        assists_traded = self._assists_since_last_death
         self._kills_since_last_death = 0
         self._assists_since_last_death = 0
 
-        print(f"[lol] Death #{self._death_count} (trade={was_trade}) by {killer}")
+        verdict = tone_engine.read_death(self._death_count,
+                                         kills_traded, assists_traded)
 
-        # 5+ deaths — always react, roast
-        if self._death_count >= 5:
-            seed = self._pick_quote("deaths", "roast_5plus")
-            self._push_event("MyDeathRoast",
-                f"Death #{self._death_count}. {seed}",
-                event, "MyDeath",
-                extra_context={"death_count": self._death_count,
-                               "killer_champion": killer_champion,
-                               "mood_spike": -0.6})
-            return
+        print(f"[lol] Death #{self._death_count} "
+              f"(traded {kills_traded}k/{assists_traded}a) "
+              f"-> {verdict.tone} @ {verdict.react_chance:.0%}")
 
-        # 1-4 deaths — 50/50
-        if random.random() < 0.5:
-            print(f"[lol] Ignoring death #{self._death_count} (coin flip)")
-            return
+        # The roll happens in _push_event, which the verdict now governs.
 
-        if was_trade:
+        # The seed pools still supply flavour, chosen to match the verdict
+        # rather than the raw death count.
+        if verdict.surprised:
             seed = self._pick_quote("deaths", "soft")
-        elif self._death_count >= 3:
-            seed = self._pick_quote("deaths", "mild")
-        else:
+        elif verdict.free_death:
             seed = self._pick_quote("deaths", "harsh")
+        elif verdict.tone in ("warm", "light"):
+            seed = self._pick_quote("deaths", "soft")
+        else:
+            seed = self._pick_quote("deaths", "mild")
 
-        self._push_event("MyDeath",
-            f"{seed or 'You died.'} Killed by {killer_champion}."
-            if killer_champion else (seed or "You died."),
-            event, "MyDeath",
-            extra_context={"death_count": self._death_count,
-                           "was_trade": was_trade,
-                           "killer_champion": killer_champion,
-                           # True only when he actually wrote something about
-                           # this champion — never "she knows the matchup".
-                           "killer_has_note": self._has_note_on(killer_champion)})
+        traded = ""
+        if kills_traded:
+            traded = (f" He traded it for {kills_traded} "
+                      f"{'kill' if kills_traded == 1 else 'kills'}.")
+        elif assists_traded:
+            traded = f" He had {assists_traded} assist(s) in that fight."
+        else:
+            traded = " He got nothing for it."
+
+        text = seed or "You died."
+        if killer_champion:
+            text += f" Killed by {killer_champion}."
+        text += traded
+
+        self._push_event("MyDeath", text, event, "MyDeath",
+            verdict=verdict,
+            extra_context={
+                "death_count": self._death_count,
+                "was_trade": bool(kills_traded or assists_traded),
+                "kills_traded": kills_traded,
+                "assists_traded": assists_traded,
+                "free_death": verdict.free_death,
+                "killer_champion": killer_champion,
+                "killer_has_note": self._has_note_on(killer_champion),
+                # Her face follows the verdict, not a fixed -0.6 on death five.
+                "mood_spike": -0.7 if verdict.tone == "roast" else
+                              (0.2 if verdict.surprised else -0.3),
+            })
 
     # ---------------------------------------------------------
     # multikills — immediate
@@ -729,10 +785,15 @@ class LolGameSource:
         else:
             seed = self._pick_quote("objectives", "baron_enemy")
 
+        verdict = (tone_engine.read_objective_participation(
+                       self.state.kills, i_was_involved)
+                   if side == "mine" else None)
         self._push_event("BaronKill", f"{subject} took Baron. {seed}".strip(),
                          event, "BaronKill",
+                         verdict=verdict,
                          extra_context={"side": side, "stolen": stolen,
-                                        "taker": taker})
+                                        "taker": taker,
+                                        "took_part": i_was_involved})
 
     # ---------------------------------------------------------
     # dragon
@@ -745,13 +806,24 @@ class LolGameSource:
         # Counted before the reaction chance is rolled: the tally is state, not
         # commentary. Skipping the count when she happens not to speak would
         # leave her asserting a drake score that never happened.
+        assisters = event.get("Assisters", []) or []
+        took_part = (self._is_me(event.get("KillerName", ""))
+                     or any(self._is_me(a) for a in assisters))
+
         subject, taker = self._attribute(side, event.get("KillerName", ""))
         self.state.record_dragon(side, dragon_type, taker)
 
         seed = self._pick_quote("objectives", "dragon_dismiss")
         text = f"{subject} took the {dragon_type} dragon. {seed}".strip()
+        # "0 kills but we get an object where was my participation, 50-50
+        # praise mock" — the verdict decides, and it differs each time.
+        verdict = (tone_engine.read_objective_participation(
+                       self.state.kills, took_part)
+                   if side == "mine" else None)
         self._push_event("DragonKill", text, event, "DragonKill",
-                         extra_context={"side": side, "taker": taker})
+                         verdict=verdict,
+                         extra_context={"side": side, "taker": taker,
+                                        "took_part": took_part})
 
     # ---------------------------------------------------------
     # structures
@@ -811,12 +883,18 @@ class LolGameSource:
     def _is_me(self, name: str) -> bool:
         if not name:
             return False
+
         lower = name.lower()
-        return (name == self._player_summoner or name == self._player_riot_id
+        if (name == self._player_summoner or name == self._player_riot_id
                 or name == self._player_champion
                 or lower == self._player_summoner.lower()
                 or lower == self._player_riot_id.lower()
-                or lower == self._player_champion.lower())
+                or lower == self._player_champion.lower()):
+            return True
+
+        # Fallback for EVENT names, whose format differs from allPlayers and
+        # which have already been seen non-Latin in the wild.
+        return self.identity.is_owner_game(name)
 
     def _classify_killer(self, killer_name: str) -> str:
         if not killer_name:
@@ -846,6 +924,31 @@ class LolGameSource:
     # push
     # ---------------------------------------------------------
 
+    def _ambient_verdict(self, event_type: str):
+        """
+        A tone for events the rulebook says nothing specific about.
+
+        Read from how his own game is going, so an ally dying while he is 8/1
+        does not get the same register as one while he is 1/8. Returns None for
+        milestones, which keep whatever register the angle asks for.
+        """
+        if event_type in ("GameStart", "GameEnd"):
+            return None
+
+        if event_type in ("MyKill", "MyKillSpree", "MyMultikill"):
+            return tone_engine.read_kill(self.state.kills, self.state.deaths)
+
+        if event_type in ("DragonKill", "BaronKill", "HeraldKill"):
+            return tone_engine.read_objective_participation(
+                self.state.kills, took_part=False)
+
+        lead = self.state.kill_lead
+        if lead >= 4:
+            return tone_engine.Verdict(tone="light", react_chance=1.0)
+        if lead <= -4:
+            return tone_engine.Verdict(tone="sharp", react_chance=1.0)
+        return tone_engine.Verdict(tone="dry", react_chance=1.0)
+
     def _reaction_chance(self, config_key: str, event_type: str) -> float:
         """
         Base chance, decayed by how often she has just reacted to this kind of
@@ -868,7 +971,14 @@ class LolGameSource:
         return base * (settings.REACTION_DECAY ** len(recent))
 
     def _push_event(self, config_key: str, text: str, raw_event: dict,
-                    event_type: str, extra_context: dict = None):
+                    event_type: str, extra_context: dict = None,
+                    verdict=None):
+        # A verdict passed in came from the streamer's rulebook
+        # (orchestrator/tone.py) and OWNS the reaction chance. Letting the
+        # generic burst decay multiply it as well silently dropped deaths the
+        # rulebook says always land — a sixth death at "100%" was arriving at
+        # 55% or 30% because the previous two were inside the window.
+        ruled = verdict is not None
         config = EVENT_CONFIG.get(config_key,
                                   EVENT_CONFIG.get(event_type,
                                                    {"priority": 5, "ttl": 15}))
@@ -884,7 +994,10 @@ class LolGameSource:
                       f"(only {since:.0f}s since her last line)")
                 return
 
-        chance = self._reaction_chance(config_key, event_type)
+        if ruled:
+            chance = verdict.react_chance
+        else:
+            chance = self._reaction_chance(config_key, event_type)
         if chance < 1.0 and random.random() > chance:
             print(f"[lol] {config_key}: skipped (chance {chance:.2f})")
             return
@@ -922,10 +1035,30 @@ class LolGameSource:
                                      and self._read.offrole_read)
             ctx["role_skill"] = self._read.role_skill
 
+        # A theme widens the angle pool rather than supplying a sentence. That
+        # is the fix for "the theme sentence was an entry message that never
+        # changed": nothing here hands her text to repeat, it only makes more
+        # observations available, and the chooser still rotates them.
+        if self.theme.angles:
+            ctx["theme_angles"] = self.theme.angles
+
         angle = self.angles.choose(event_type, self.state, ctx)
         if angle is not None:
             ctx["angle"] = angle.instruction
             ctx["angle_id"] = angle.id
+
+        # Tone is separate from the angle on purpose: the angle says what to
+        # talk about, the tone says how warm to be about it, and multiplying
+        # them is where the variety comes from. The theme shifts it a step —
+        # she is harder on him in his worst role, softer when his own tags say
+        # the enemy team can hold him still.
+        if verdict is None:
+            verdict = self._ambient_verdict(event_type)
+        if verdict is not None:
+            wanted = _shift_tone(verdict.tone, self.theme.tone_shift)
+            chosen = self.tones.resolve(wanted)
+            ctx["tone"] = chosen
+            ctx["tone_instruction"] = tone_engine.instruction(chosen, verdict)
 
         # Her face should reflect how the game is going, not sit flat until a
         # fifth death. The worker only applies mood_spike when the LLM did not
@@ -949,6 +1082,12 @@ class LolGameSource:
     def _fetch(self) -> dict | None:
         try:
             resp = requests.get(API_URL, timeout=2, verify=False)
+            # 404 is the normal answer when no game is running — the endpoint
+            # exists only while the client is in one. It was being reported as
+            # "[lol] API error: 404 Client Error" on every startup, which reads
+            # like a fault and is not one.
+            if resp.status_code == 404:
+                return None
             resp.raise_for_status()
             return resp.json()
         except (requests.ConnectionError, requests.Timeout):
@@ -959,3 +1098,10 @@ class LolGameSource:
 
     def stop(self):
         self._running = False
+
+def _shift_tone(tone: str, shift: int) -> str:
+    """Move a tone along the ladder. Clamped at both ends."""
+    if not shift or tone not in tone_engine.TONES:
+        return tone
+    i = tone_engine.TONES.index(tone) + shift
+    return tone_engine.TONES[max(0, min(len(tone_engine.TONES) - 1, i))]
