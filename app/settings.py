@@ -82,17 +82,36 @@ class Settings:
     # noticeably poor at it, so "small" is the sensible floor here even though
     # "base" would do for English alone.
     VOICE_STT_MODEL = "small"       # tiny / base / small / medium
-    VOICE_STT_LANGUAGE = ""         # "" = auto-detect per utterance
 
-    # Biases the decoder toward words it should expect. Two jobs: it stops
-    # "Ravyn" coming back as "Raven" or "Равин", and it makes English champion
-    # names inside a Russian sentence ("этот Garen меня убил") survive instead
-    # of being transliterated — which is the realistic failure for a Russian
-    # speaker playing an English client.
+    # Beam width. 1 is greedy and fastest; 5 is Whisper's own default and
+    # noticeably better on Russian, which is where the accuracy complaints
+    # came from. Measured on this machine, `small` took ~1.4s to transcribe
+    # ~2s of audio at beam 1, so there is room — drop it back to 1 if she
+    # starts feeling slow to answer.
+    VOICE_STT_BEAM = 5
+    VOICE_STT_LANGUAGE = ""         # "" = choose between VOICE_LANGUAGES
+
+    # He speaks two languages. Whisper knows ninety-nine, and on two seconds of
+    # audio it will confidently pick any of them — a live session produced
+    # German, Polish, Latvian and Swedish from Russian speech, and "Ravyn,
+    # расскажи анекдот" came back as Polish "Ravyn, rozkażenik".
     #
-    # Kept short deliberately. A long prompt makes Whisper hallucinate its own
-    # vocabulary back at you on quiet audio.
-    VOICE_STT_PROMPT = "Ravyn. League of Legends: Riven, Garen, jungle, mid, ADC, support, gank, drake, baron."
+    # So detection is CONSTRAINED to this list rather than left open. Whichever
+    # of these scores highest wins, even if some third language scored higher
+    # still — being wrong between two options is recoverable, being wrong
+    # between ninety-nine is not.
+    VOICE_LANGUAGES = ("ru", "en")
+
+    # Per language, because an all-Latin prompt drags detection toward Latin
+    # scripts — which is part of what produced the German and Polish above.
+    # The English one keeps champion names intact inside Russian speech; the
+    # Russian one anchors the script and spells her name the way it sounds.
+    #
+    # Short on purpose: a long prompt gets hallucinated back on quiet audio.
+    VOICE_STT_PROMPTS = {
+        "en": "Ravyn. League of Legends: Riven, Garen, jungle, mid, support, drake, baron.",
+        "ru": "Равин. Лига Легенд: Ривен, Гарен, лес, мид, саппорт, дракон, барон.",
+    }
     VOICE_MIN_CHARS = 4             # shorter than this is not a sentence
     VOICE_TTL = 45.0                # an answer this late answers nothing
 
