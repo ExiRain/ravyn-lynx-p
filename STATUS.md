@@ -843,24 +843,52 @@ Whisper hallucinates confidently on silence and reaches for the same handful of
 phrases every time ("You", "Thanks for watching", "Продолжение следует"). Those
 are filtered, along with anything under two words.
 
-**Russian and English both, per utterance.** Whisper is multilingual and Russian
-is one of its better-supported languages; `VOICE_STT_LANGUAGE = ""` auto-detects
-each utterance, so he can switch freely between sentences. Three things decide
-whether that actually works:
+**Language detection is constrained to two, and that is not a nicety.**
 
-- **Never use a `.en` model.** `tiny.en`, `base.en`, `small.en` are English-only
-  and will transcribe Russian as nonsense English.
-- **Size matters more for Russian than English.** `tiny` and `base` are
-  noticeably poor at it; `small` is the floor, `medium` if the CPU can take it.
-- **Code-switching inside one sentence is the real risk**, and it is his exact
-  case: an English client inside Russian speech, *"этот Garen меня убил"*.
-  Whisper picks one language per segment and transliterates the rest.
-  `VOICE_STT_PROMPT` biases the decoder toward her name and champion vocabulary,
-  which also stops "Ravyn" coming back as "Raven". Kept short — a long priming
-  prompt makes Whisper hallucinate its own vocabulary back on quiet audio.
+Open detection failed badly on the first live session. Whisper ranks ninety-nine
+languages, and on two seconds of audio the winner was routinely one he has never
+spoken:
 
-Detection reads the audio, so a very short utterance ("да") is the shaky case;
-pin `VOICE_STT_LANGUAGE` if it becomes a problem.
+```
+[hear] 1.6s audio  [de]: Am Breaker.
+[hear] 2.1s audio  [pl]: Ravyn, rozkażenik.        <- "Равин, расскажи анекдот"
+[hear] 2.2s audio  [lv]: Hei Ravyn, telejok.
+[hear] 2.0s audio  [sv]: Det är en röskamad ingörit.
+```
+
+Worse, the mapping downstream was `"ru" if detected == "ru" else "en"` — so a
+Russian sentence detected as Polish got **answered in English**, which is
+exactly what he saw.
+
+Four fixes, in order of how much each mattered:
+
+1. **`VOICE_LANGUAGES = ("ru", "en")`.** Whichever of the two scores higher wins,
+   even if some third language scored higher still. Being wrong between two
+   options is recoverable; being wrong between ninety-nine is not. When the open
+   pass decoded as something else its text is discarded and the utterance is
+   re-transcribed pinned — the only case that costs a second pass.
+2. **Cyrillic in the transcript settles it**, whatever Whisper labelled it. Same
+   detector the chat path uses.
+3. **`condition_on_previous_text=False`.** Whisper loops when it conditions on
+   its own output — `Хм, хм, хм, хм, хм, хм, хм` out of 1.8s of audio, which
+   also burned eight seconds of CPU producing it. Each utterance here is
+   independent, so there is nothing to condition on. `compression_ratio_threshold`
+   catches the rest: a high ratio *is* a repetition loop.
+4. **One priming prompt per language.** The original was all-Latin English, which
+   drags detection toward Latin scripts — part of what produced the German and
+   Polish above. `VOICE_STT_PROMPTS` has a Cyrillic one for Russian that also
+   spells her name the way it sounds.
+
+Two levers left if accuracy still disappoints, in order:
+`VOICE_STT_BEAM` is 5 now (Whisper's own default, noticeably better on Russian
+than greedy), then `VOICE_STT_MODEL = "medium"` — size matters far more for
+Russian than English, at roughly triple the transcribe time.
+
+**Never use a `.en` model.** `tiny.en`, `base.en`, `small.en` are English-only
+and would transcribe Russian as nonsense English.
+
+Short utterances remain the shaky case. `VOICE_STT_LANGUAGE = "ru"` pins it
+outright if a session is Russian throughout.
 
 `--no-hear` keeps the gate and drops transcription. A missing `faster-whisper`,
 a model that will not load, an empty transcript — each logs once and leaves her

@@ -182,16 +182,94 @@ def test_signal_shape():
     check("and the decoder is primed with her name",
           "Ravyn" in (seen.get("initial_prompt") or ""),
           str(seen.get("initial_prompt"))[:60])
-    check("the priming prompt stays short enough not to be hallucinated back",
-          len(S.VOICE_STT_PROMPT) < 200, str(len(S.VOICE_STT_PROMPT)))
+    check("priming prompts stay short enough not to be hallucinated back",
+          all(len(p) < 200 for p in S.VOICE_STT_PROMPTS.values()))
+    check("there is a prompt per language, so an all-Latin one cannot drag "
+          "detection toward Latin scripts",
+          set(S.VOICE_STT_PROMPTS) >= set(S.VOICE_LANGUAGES),
+          str(set(S.VOICE_STT_PROMPTS)))
+    check("the Russian prompt is actually Cyrillic",
+          any("\u0400" <= ch <= "\u04ff" for ch in S.VOICE_STT_PROMPTS["ru"]))
 
-    # And a hallucination never becomes a signal.
-    voice._model = FakeModel("Thanks for watching!", "en")
+    # Whisper loops when it conditions on its own output.
+    check("conditioning on previous text is off",
+          seen.get("condition_on_previous_text") is False)
+    check("and repetition loops are thresholded out",
+          seen.get("compression_ratio_threshold") is not None)
+
+
+def test_language_is_constrained_to_two():
+    """
+    Whisper ranks ninety-nine languages and, on two seconds of audio, routinely
+    picks one he has never spoken. A live session produced de, pl, lv and sv
+    from Russian speech, and "Ravyn, расскажи анекдот" came back as Polish
+    "Ravyn, rozkażenik" — then got answered in English, because anything that
+    was not "ru" fell through to English.
+    """
+    print("\n--- detection is constrained to the two he speaks ---")
+    voice = VoiceInput(SignalQueue())
+
+    def info(top, probs):
+        return types.SimpleNamespace(language=top, all_language_probs=probs)
+
+    check("Russian wins when it should",
+          voice._choose_language(
+              info("ru", [("ru", 0.9), ("en", 0.05)])) == "ru")
+    check("English wins when it should",
+          voice._choose_language(
+              info("en", [("en", 0.8), ("ru", 0.1)])) == "en")
+
+    # The live failure: Polish scored highest overall, but between the two he
+    # actually speaks, Russian is the answer.
+    check("a language he does not speak cannot win",
+          voice._choose_language(
+              info("pl", [("pl", 0.6), ("ru", 0.3), ("en", 0.05)])) == "ru")
+    check("nor can German",
+          voice._choose_language(
+              info("de", [("de", 0.7), ("en", 0.2), ("ru", 0.02)])) == "en")
+
+    # Older faster-whisper builds may not return probabilities at all.
+    check("without probabilities it falls back to the detected language",
+          voice._choose_language(info("en", None)) == "en")
+    check("and refuses one outside the allowed set",
+          voice._choose_language(info("lv", None)) in S.VOICE_LANGUAGES)
+
+    check("the allowed set is exactly the two he speaks",
+          set(S.VOICE_LANGUAGES) == {"ru", "en"}, str(S.VOICE_LANGUAGES))
+
+
+def test_cyrillic_overrides_whisper():
+    print("\n--- the script of the transcript has the last word ---")
+    queue = SignalQueue()
+    voice = VoiceInput(queue)
+    voice.available = True
+
+    class Model:
+        def __init__(self, text, lang): self._t, self._l = text, lang
+        def transcribe(self, samples, **kw):
+            return ([types.SimpleNamespace(text=self._t)],
+                    types.SimpleNamespace(language=self._l,
+                                          all_language_probs=[(self._l, 0.9)]))
+
+    # Whisper mislabels Russian text as English. The Cyrillic settles it.
+    voice._model = Model("Равин, расскажи анекдот", "en")
+    voice._handle([0.0] * 32000)
+    signal = queue.pop()
+    check("Cyrillic text is answered in Russian whatever the label",
+          signal is not None and signal.lang == "ru",
+          signal.lang if signal else "nothing queued")
+
+    voice._model = Model("Ravyn tell me a joke", "en")
+    voice._handle([0.0] * 32000)
+    check("Latin text stays English", queue.pop().lang == "en")
+
+    # A hallucination never becomes a signal.
+    voice._model = Model("Thanks for watching!", "en")
     voice._handle([0.0] * 32000)
     check("a hallucinated transcript is dropped", queue.pop() is None)
 
-    # And speech that was clearly heard but not aimed at her.
-    voice._model = FakeModel("go bot go bot right now", "en")
+    # Nor does speech that was heard clearly but not aimed at her.
+    voice._model = Model("go bot go bot right now", "en")
     voice._handle([0.0] * 32000)
     check("a gank call never reaches the queue", queue.pop() is None)
 
@@ -248,6 +326,8 @@ def main():
     test_hallucination_filter()
     test_submit_is_safe_from_the_audio_thread()
     test_signal_shape()
+    test_language_is_constrained_to_two()
+    test_cyrillic_overrides_whisper()
     test_degrades_to_silence()
     test_gate_capture_contract()
 

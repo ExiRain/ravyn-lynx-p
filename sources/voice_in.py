@@ -38,6 +38,7 @@ import threading
 import time
 
 from app.settings import get_settings
+from orchestrator import language
 from orchestrator.models import Signal
 from orchestrator.priority_queue import SignalQueue
 
@@ -169,24 +170,70 @@ class VoiceInput:
 
         self.available = False
 
+    def _transcribe(self, samples, forced: str):
+        """One pass. `forced` empty means let Whisper detect."""
+        segments, info = self._model.transcribe(
+            samples,
+            language=forced or None,
+            initial_prompt=settings.VOICE_STT_PROMPTS.get(forced or "en"),
+            beam_size=settings.VOICE_STT_BEAM,
+            vad_filter=False,       # the gate already did that, and better
+            # Whisper loops when it conditions on its own previous output —
+            # "Хм, хм, хм, хм, хм, хм, хм" out of 1.8s of audio, which also
+            # burned eight seconds of CPU producing it. Each utterance is
+            # independent here anyway, so there is nothing to condition on.
+            condition_on_previous_text=False,
+            # Drop segments that decoded badly rather than emitting confident
+            # nonsense. A high compression ratio IS a repetition loop.
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-1.0,
+            no_speech_threshold=0.6,
+        )
+        return " ".join(seg.text for seg in segments).strip(), info
+
+    def _choose_language(self, info) -> str:
+        """
+        The best of the languages he actually speaks.
+
+        Whisper ranks all ninety-nine, and on two seconds of audio the winner
+        is routinely something he has never spoken — a live session produced
+        de, pl, lv and sv from Russian. Restricting the choice to two makes a
+        wrong answer recoverable instead of nonsense.
+        """
+        probs = getattr(info, "all_language_probs", None)
+        allowed = settings.VOICE_LANGUAGES
+
+        if probs:
+            scores = dict(probs)
+            return max(allowed, key=lambda lang: scores.get(lang, 0.0))
+
+        detected = getattr(info, "language", "") or ""
+        return detected if detected in allowed else allowed[0]
+
     def _handle(self, samples) -> None:
         t0 = time.time()
         seconds = len(samples) / 16000.0
 
-        segments, info = self._model.transcribe(
-            samples,
-            # None = detect per utterance. Whisper is multilingual and Russian
-            # is one of its better-supported languages, but detection reads the
-            # audio, so a very short utterance ("да") is the shaky case. Set
-            # VOICE_STT_LANGUAGE to pin it if that becomes a problem.
-            language=settings.VOICE_STT_LANGUAGE or None,
-            initial_prompt=settings.VOICE_STT_PROMPT or None,
-            beam_size=1,            # greedy: latency matters more than the
-                                    # last point of accuracy on one sentence
-            vad_filter=False,       # the gate already did that, and better
-        )
-        text = " ".join(s.text for s in segments).strip()
-        detected = getattr(info, "language", "") or ""
+        pinned = settings.VOICE_STT_LANGUAGE
+        text, info = self._transcribe(samples, pinned)
+        detected = pinned or (getattr(info, "language", "") or "")
+
+        if not pinned:
+            chosen = self._choose_language(info)
+            if chosen != detected:
+                # The first pass decoded as a language he does not speak, so
+                # its text is not worth keeping. Redo it pinned — this is the
+                # only case that costs a second pass.
+                print(f"[hear]   heard as [{detected}], not a language he "
+                      f"speaks — retrying as [{chosen}]")
+                text, info = self._transcribe(samples, chosen)
+            detected = chosen
+
+        # Last word goes to the script itself. If the transcript is Cyrillic it
+        # is Russian, whatever Whisper labelled it — this is the same detector
+        # the chat path uses, and it cannot be argued with.
+        if text and language.cyrillic_ratio(text) >= language.CYRILLIC_THRESHOLD:
+            detected = "ru"
 
         print(f"[hear] {seconds:.1f}s audio, {time.time() - t0:.1f}s transcribe "
               f"[{detected}]: {text[:70]}")
@@ -210,8 +257,9 @@ class VoiceInput:
             mode="improv",
             skip_llm=False,
             ttl=settings.VOICE_TTL,
-            # Whisper heard which language he used, which is better evidence
-            # than guessing from the text afterwards.
+            # Settled above: constrained detection, then the script of the
+            # transcript itself as the tiebreaker. Anything that is not
+            # Russian by then is English, because those are the only two.
             lang="ru" if detected == "ru" else "en",
             context={
                 "trigger": "voice",
