@@ -333,6 +333,9 @@ def test_global_gap():
     source._read = None
     source._player_summoner = "exiled"
     source._player_champion = "Riven"
+    source._death_count = 0
+    source._quotes = {}
+    source.lang = S.LANG_AMBIENT
     source.theme = game_theme.NO_THEME
     source.tones = tone.ToneLadder()
     pushed = []

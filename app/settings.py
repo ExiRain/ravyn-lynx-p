@@ -68,6 +68,59 @@ class Settings:
     # it comes back, reads as you, and arms a fresh hold against nothing.
     VOICE_MUTE_TAIL = 0.35
 
+    # --- Hearing him (sources/voice_in.py) ---
+    # Whisper on the CPU at int8: zero VRAM, which is what lets it sit beside
+    # the TTS on the 5080. The voice gate feeds it, so it runs once per
+    # sentence rather than continuously — that is the job openWakeWord was
+    # going to do, and the gate already does it.
+    VOICE_INPUT_ENABLED = True
+    # MUST be a multilingual model. The ".en" variants (tiny.en, base.en,
+    # small.en) are English-only and will transcribe Russian as nonsense
+    # English — do not "optimise" to one of those.
+    #
+    # Size matters far more for Russian than for English: tiny and base are
+    # noticeably poor at it, so "small" is the sensible floor here even though
+    # "base" would do for English alone.
+    VOICE_STT_MODEL = "small"       # tiny / base / small / medium
+    VOICE_STT_LANGUAGE = ""         # "" = auto-detect per utterance
+
+    # Biases the decoder toward words it should expect. Two jobs: it stops
+    # "Ravyn" coming back as "Raven" or "Равин", and it makes English champion
+    # names inside a Russian sentence ("этот Garen меня убил") survive instead
+    # of being transliterated — which is the realistic failure for a Russian
+    # speaker playing an English client.
+    #
+    # Kept short deliberately. A long prompt makes Whisper hallucinate its own
+    # vocabulary back at you on quiet audio.
+    VOICE_STT_PROMPT = "Ravyn. League of Legends: Riven, Garen, jungle, mid, ADC, support, gank, drake, baron."
+    VOICE_MIN_CHARS = 4             # shorter than this is not a sentence
+    VOICE_TTL = 45.0                # an answer this late answers nothing
+
+    # The microphone is his, so what it hears is attributed to him. There is
+    # no speaker identification here — anyone else in the room is a guest on
+    # his mic and will be treated as him.
+    VOICE_SPEAKER = "exiledra1n"
+
+    # Only answer when she is actually addressed.
+    #
+    # Without this she replies to EVERY sentence the microphone hears —
+    # including you calling a gank on Discord, or swearing at the screen. The
+    # gate cannot tell the difference; only the words can.
+    #
+    # This is the wake word after all, just applied to the transcript rather
+    # than to the audio. Cheaper and more reliable that way: Whisper has
+    # already done the hard part, and matching text beats matching a waveform.
+    VOICE_REQUIRE_NAME = True
+
+    # What "Ravyn" comes back as. Whisper will not spell it the way you do,
+    # and in Russian it transliterates — these are the forms to expect. Match
+    # is a substring test on the lowercased transcript, so "ravyn," and
+    # "ravyn's" are covered without listing them.
+    VOICE_NAMES = [
+        "ravyn", "raven", "ravin", "ravon", "revan",
+        "равин", "равен", "рейвен", "рэйвен", "рэвин", "рейвин",
+    ]
+
     # --- Game reaction rate ---
     # Chance she says anything at all about an event. Frequent, low-stakes
     # things get filtered here so she is not commentating every second.
@@ -139,6 +192,26 @@ class Settings:
     # Nobody addressed her, so there is nothing to mirror. Keep this fixed;
     # it is what stops her flipping language mid-stream.
     LANG_AMBIENT = "en"
+
+    # Chance that a GAME gets her Russian voice instead. 0.0 disables it, 1.0
+    # forces Russian; 0.5 is a coin flip.
+    #
+    # Rolled ONCE PER GAME, not per line. Per line would have her switching
+    # language between a drake and the death that follows it, which is not a
+    # bilingual streamer, it is a broken one. Per game gives a coherent sample
+    # to judge her Russian by, which is the point of turning it on.
+    #
+    # Only her AMBIENT voice — game reactions, idle thoughts. Replies still
+    # follow whoever spoke to her via LANG_REPLY, so a Russian chatter gets
+    # Russian in an English game and vice versa.
+    #
+    # What is NOT translated: the angles, tones and themes stay English. They
+    # are instructions to the model, not text she says, and a 201-language
+    # model takes English direction to Russian output without help. Her
+    # PERSONA is the real gap — banned openers, "fufu", the teammate ladder are
+    # all English and none of them survive translation, so expect a Russian
+    # game to sound flatter than an English one until that addendum exists.
+    LANG_AMBIENT_RU_CHANCE = 0.5
 
     # Reply: how she answers someone who spoke to her.
     #   "en"        — always English

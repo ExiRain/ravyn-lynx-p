@@ -9,6 +9,7 @@ Usage:
     python -m app.main                # full stack: orchestrator + TTS
     python -m app.main --no-tts       # silent mode — log her lines, no audio
     python -m app.main --no-voice     # disable the voice gate (VAD)
+    python -m app.main --no-hear      # keep the gate, but do not transcribe
     python -m app.main --test         # mock sources
     python -m app.main --no-twitch
     python -m app.main --no-lol
@@ -33,6 +34,7 @@ NO_TWITCH = "--no-twitch" in sys.argv
 NO_LOL = "--no-lol" in sys.argv
 NO_TTS = "--no-tts" in sys.argv
 NO_VOICE = "--no-voice" in sys.argv
+NO_HEAR = "--no-hear" in sys.argv
 
 
 def main():
@@ -70,11 +72,25 @@ def main():
     # Voice gate. The response listener drives its mute around actual
     # playback and asks it again, with her line already synthesised, before
     # any of it is sent to Godot — see services/response_listener.py.
+    #
+    # It also feeds STT when that is on: one microphone stream, one opinion
+    # about whether he is talking, and one place that knows to ignore her own
+    # voice coming back through the speakers.
     if settings.VOICE_GATE_ENABLED and not NO_VOICE:
         from sources.voice_gate import VoiceGate
-        dispatcher.voice_gate = VoiceGate(settings)
+
+        hearing = None
+        if settings.VOICE_INPUT_ENABLED and not NO_HEAR:
+            from sources.voice_in import VoiceInput
+            hearing = VoiceInput(queue, identity=identity)
+
+        dispatcher.voice_gate = VoiceGate(
+            settings, on_utterance=hearing.submit if hearing else None)
         Thread(target=dispatcher.voice_gate.run,
                daemon=True, name="voice-gate").start()
+
+        if hearing:
+            Thread(target=hearing.run, daemon=True, name="voice-in").start()
 
     # --- Audio pipeline ---
     tts = None

@@ -36,12 +36,14 @@ urllib3.exceptions = types.SimpleNamespace(InsecureRequestWarning=Warning)
 urllib3.disable_warnings = lambda *a, **k: None
 sys.modules["urllib3"] = urllib3
 
+from app.settings import get_settings                          # noqa: E402
 from orchestrator import game_theme, tone                      # noqa: E402
 from orchestrator.game_angles import (                          # noqa: E402
     THEME_ANGLES, AngleChooser,
 )
 from orchestrator.game_state import GameState                   # noqa: E402
 
+S = get_settings()
 FAILURES: list[str] = []
 
 
@@ -252,6 +254,67 @@ def test_theme_shifts_tone():
     check("an unknown tone passes through", _shift_tone("weird", +1) == "weird")
 
 
+def test_teammate_ladder():
+    """
+    What she calls his teammates hardens as the game goes.
+
+    The streamer's ladder — piggies, apes, creatures, bronze hardstuck, soft to
+    harsh — keyed on his death count. It replaces one flat list in the system
+    prompt that gave her no way to sound angrier at death nine than at death
+    one, which is a large part of "she was mostly dismissive".
+    """
+    print("\n--- the teammate ladder ---")
+    import json
+    from pathlib import Path
+
+    for deaths, expected in [(0, 1), (1, 1), (3, 1),
+                             (4, 2), (5, 2),
+                             (6, 3), (8, 3),
+                             (9, 4), (30, 4)]:
+        got = tone.teammate_rank(deaths)
+        check(f"{deaths} deaths is rank {expected}", got == expected, str(got))
+
+    check("it never exceeds the top rank",
+          tone.teammate_rank(999) == tone.TEAMMATE_RANK_MAX)
+    check("the ladder only ever rises",
+          all(tone.teammate_rank(d) <= tone.teammate_rank(d + 1)
+              for d in range(0, 40)))
+
+    # And the words actually exist for every rank it can return.
+    data = json.loads((Path(__file__).resolve().parent.parent
+                       / "data" / "game_quotes.json").read_text(encoding="utf-8"))
+    ranks = data["teammates"]["ranks"]
+    for r in range(1, tone.TEAMMATE_RANK_MAX + 1):
+        words = ranks.get(str(r), [])
+        check(f"rank {r} has words", len(words) >= 2, str(words))
+    check("no word appears in two ranks — the ladder would not read as one",
+          len({w for ws in ranks.values() for w in ws})
+          == sum(len(ws) for ws in ranks.values()))
+
+
+def test_russian_mixing():
+    print("\n--- the Russian coin flip ---")
+    import json
+    from pathlib import Path
+
+    check("the chance is a probability", 0.0 <= S.LANG_AMBIENT_RU_CHANCE <= 1.0,
+          str(S.LANG_AMBIENT_RU_CHANCE))
+
+    # A quote is spoken verbatim, so a Russian game needs Russian ones — there
+    # is no model anywhere in that path to translate them.
+    data = json.loads((Path(__file__).resolve().parent.parent
+                       / "data" / "game_quotes.json").read_text(encoding="utf-8"))
+    pools = data["game_state"]
+    for pool in ("cheer", "boo"):
+        check(f"{pool} has a Russian pool", pools.get(pool + "_ru"),
+              str(list(pools)))
+        check(f"{pool}_ru is actually Cyrillic",
+              any(any("\u0400" <= ch <= "\u04ff" for ch in line)
+                  for line in pools[pool + "_ru"]))
+        check(f"{pool}_ru is the same size as {pool}",
+              len(pools[pool + "_ru"]) == len(pools[pool]))
+
+
 def main():
     test_rulebook()
     test_ladder_refuses_to_repeat()
@@ -259,6 +322,8 @@ def main():
     test_theme_resolution()
     test_theme_is_not_a_prefix()
     test_theme_shifts_tone()
+    test_teammate_ladder()
+    test_russian_mixing()
 
     print()
     if FAILURES:

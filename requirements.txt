@@ -10,3 +10,4 @@ numpy
 phonemizer
 silero-vad
 sounddevice
+faster-whisper

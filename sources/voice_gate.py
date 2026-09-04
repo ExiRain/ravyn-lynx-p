@@ -31,6 +31,12 @@ whole generation window — deaf exactly when you were most likely to start
 talking. It never heard you begin, so she spoke over you, and afterwards found
 no recent speech to hold the next line against.
 
+It can also hand what you said to a listener, which is how `sources/voice_in.py`
+hears you without opening a second microphone stream. The gate already has the
+mic, already knows where a sentence starts and ends, and already knows to
+ignore her own voice — duplicating any of that for STT would mean two streams
+disagreeing about whether you are talking.
+
 Degrades to "never hold" if the audio stack is missing, so a broken mic setup
 leaves her behaving exactly as she does today rather than going silent.
 """
@@ -39,6 +45,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 
 # 512 samples at 16kHz is 32ms, which is the frame size Silero expects.
 SAMPLE_RATE = 16000
@@ -61,11 +68,22 @@ FRAMES_TO_STOP = 25     # ~800ms of quiet before we call it finished
 # gate and is miserable to diagnose live.
 MUTE_SAFETY_TIMEOUT = 120.0
 
+# Utterance capture, in 32ms frames.
+PREROLL_FRAMES = 8              # ~256ms kept before speech is confirmed
+MIN_UTTERANCE_FRAMES = 16       # ~500ms — below this it is a cough, not a word
+MAX_UTTERANCE_FRAMES = 1875     # ~60s ceiling so a stuck stream cannot grow
+
 
 class VoiceGate:
 
-    def __init__(self, settings):
+    def __init__(self, settings, on_utterance=None):
+        """
+        on_utterance: called with one float32 numpy array per finished
+        sentence, from the audio thread. Optional — without it the gate does
+        exactly what it did before and captures nothing.
+        """
         self.settings = settings
+        self._on_utterance = on_utterance
 
         self._speaking = False
         self._last_speech_at = 0.0
@@ -161,6 +179,7 @@ class VoiceGate:
     def run(self) -> None:
         """Blocking. Run in a daemon thread."""
         try:
+            import numpy as np
             import sounddevice as sd
             import torch
             from silero_vad import load_silero_vad
@@ -181,6 +200,13 @@ class VoiceGate:
         speech_run = 0
         silence_run = 0
 
+        # Audio for the utterance being spoken, plus a short pre-roll so the
+        # first syllable is not clipped: by the time FRAMES_TO_START has
+        # convinced us you are talking, you have already said ~100ms.
+        capturing = self._on_utterance is not None
+        preroll: deque = deque(maxlen=PREROLL_FRAMES)
+        utterance: list = []
+
         def on_audio(indata, frames, time_info, status):
             nonlocal speech_run, silence_run
 
@@ -193,7 +219,18 @@ class VoiceGate:
                 deaf = self._deaf()
             if deaf:
                 speech_run = silence_run = 0
+                if capturing:
+                    preroll.clear()
+                    utterance.clear()
                 return
+
+            if capturing:
+                frame = indata[:, 0].copy()
+                (utterance if utterance else preroll).append(frame)
+                if len(utterance) > MAX_UTTERANCE_FRAMES:
+                    # Somebody left a stream open, or the room is loud. Drop it
+                    # rather than grow without bound.
+                    utterance.clear()
 
             chunk = torch.from_numpy(indata[:, 0].copy())
 
@@ -207,20 +244,35 @@ class VoiceGate:
                 silence_run = 0
                 if speech_run >= FRAMES_TO_START:
                     with self._lock:
-                        if not self._speaking:
+                        started = not self._speaking
+                        if started:
                             print("[voice] You are talking — holding her")
                         self._speaking = True
                         self._last_speech_at = time.time()
+                    if capturing and started:
+                        utterance.extend(preroll)
+                        preroll.clear()
             else:
                 silence_run += 1
                 speech_run = 0
                 if silence_run >= FRAMES_TO_STOP:
                     with self._lock:
-                        if self._speaking:
+                        stopped = self._speaking
+                        if stopped:
                             self._speaking = False
                             self._last_speech_at = time.time()
                             print(f"[voice] You stopped — holding "
                                   f"{self.settings.VOICE_HOLD_AFTER_SPEECH:.0f}s more")
+
+                    if capturing and stopped:
+                        spoken, utterance[:] = list(utterance), []
+                        if len(spoken) >= MIN_UTTERANCE_FRAMES:
+                            try:
+                                self._on_utterance(np.concatenate(spoken))
+                            except Exception as e:
+                                # Never let a listener kill the audio thread —
+                                # that would take the gate down with it.
+                                print(f"[voice] Utterance handler failed: {e}")
 
         try:
             with sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
