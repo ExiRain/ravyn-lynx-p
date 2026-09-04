@@ -827,7 +827,10 @@ champion tags are facts about the game. Different lifecycles.
 - Whether narration recurs on the official model (watch `Stripped narration ->`)
 
 **Not built**
-- Wake word + STT so she can *hear* you (the gate is the prerequisite, and it exists)
+- ~~Wake word + STT~~ — **built**, `sources/voice_in.py`. No wake word: the
+  gate already does what it was for. **Untested against a real microphone**
+- A Russian addendum to her persona. `LANG_AMBIENT_RU_CHANCE` is on at 0.5, so
+  she speaks Russian now; the character does not survive the translation yet
 - Everything in §7
 - `ravyn-nb` has no PR
 

@@ -137,9 +137,11 @@ class LolGameSource:
         # orchestrator/identity.py.
         self.identity = identity or Identity(data_dir / "identity.json")
 
-        # How hard she goes, and the shape of this particular game.
+        # How hard she goes, the shape of this particular game, and which
+        # language she narrates it in.
         self.tones = tone_engine.ToneLadder()
         self.theme = game_theme.NO_THEME
+        self.lang = settings.LANG_AMBIENT
 
     @property
     def is_game_active(self) -> bool:
@@ -276,6 +278,14 @@ class LolGameSource:
         # reports the role it actually resolved, not an empty one.
         self.state.update(data, self._player_team, self._my_names)
         self._refresh_read()
+
+        # One roll per game — see LANG_AMBIENT_RU_CHANCE. Stamped on every
+        # game signal below, so a game is coherently one language rather than
+        # flipping between a drake and the death after it.
+        self.lang = ("ru" if random.random() < settings.LANG_AMBIENT_RU_CHANCE
+                     else settings.LANG_AMBIENT)
+        if self.lang != settings.LANG_AMBIENT:
+            print(f"[lol]   Language for this game: {self.lang}")
 
         self.theme = game_theme.resolve(
             role=self.state.position,
@@ -426,7 +436,14 @@ class LolGameSource:
         are probably talking about it already, and that is when the noise is
         wanted rather than a problem.
         """
-        line = self._pick_quote("game_state", "cheer" if won else "boo")
+        # A quote is spoken verbatim, so a Russian game needs Russian ones —
+        # there is no model in this path to translate anything.
+        pool = "cheer" if won else "boo"
+        if self.lang == "ru":
+            line = (self._pick_quote("game_state", pool + "_ru")
+                    or self._pick_quote("game_state", pool))
+        else:
+            line = self._pick_quote("game_state", pool)
         if not line:
             line = "Hah! We won." if won else "Boo. We lost."
 
@@ -437,6 +454,7 @@ class LolGameSource:
             mode="quote",
             skip_llm=True,          # straight to TTS, no LLM round trip
             ttl=settings.CHEER_TTL,
+            lang=self.lang,
             context={
                 "trigger": "game_event",
                 "game": "league_of_legends",
@@ -1061,6 +1079,15 @@ class LolGameSource:
         if situation:
             ctx["situation"] = situation
 
+        # What she calls his teammates right now. Hardens with his death count
+        # (orchestrator/tone.py), so the vocabulary escalates in step with her
+        # tone rather than being one fixed list she picks from at random.
+        rank = tone_engine.teammate_rank(self._death_count)
+        words = self._quotes.get("teammates", {}).get("ranks", {}).get(str(rank))
+        if words:
+            ctx["teammate_words"] = list(words)
+            ctx["teammate_rank"] = rank
+
         # His own notes travel separately from the measured facts, and are
         # labelled as his in the prompt. §7: she may repeat what he told her,
         # never extend it into a read of her own.
@@ -1113,6 +1140,9 @@ class LolGameSource:
             mode="improv",
             skip_llm=False,
             ttl=config.get("ttl"),
+            # Explicit, so the dispatcher's resolver leaves it alone: the game
+            # already decided, and it decided for the whole game.
+            lang=self.lang,
             context=ctx,
         )
         self.queue.push(signal)

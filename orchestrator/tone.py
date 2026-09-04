@@ -58,6 +58,28 @@ DEATH_LECTURE = (
 )
 
 
+# What she calls his teammates, and how that hardens as the game goes.
+#
+# The streamer's ladder: piggies, apes, creatures, bronze hardstuck — soft to
+# harsh — stepping up on his death count. Deaths are the proxy for how the game
+# is going, and by the time he has died nine times "the piggies" has stopped
+# being funny.
+#
+# Keyed on HIS deaths rather than the team's on purpose: it is the number he
+# feels, and it is the one already driving every other escalation in this file,
+# so her vocabulary hardens in step with her tone instead of on its own clock.
+TEAMMATE_RANKS = ((3, 1), (5, 2), (8, 3))       # deaths <= n -> rank
+TEAMMATE_RANK_MAX = 4
+
+
+def teammate_rank(death_count: int) -> int:
+    """1-4, soft to harsh."""
+    for limit, rank in TEAMMATE_RANKS:
+        if death_count <= limit:
+            return rank
+    return TEAMMATE_RANK_MAX
+
+
 @dataclass(frozen=True)
 class Verdict:
     """What the numbers say about how he is doing, before any tone is chosen."""
