@@ -171,6 +171,8 @@ Two committed suites, both standalone (no pytest, no network):
   the ladder refusing consecutive roasts, and that a theme never becomes a
   prefix
 - `python tests/test_game_variety.py` also covers the cheer and boo
+- `python tests/test_voice_in.py` — 40 checks: the hallucination filter, that
+  submit cannot block the audio thread, decoder priming, and that it fails quiet
 - `python tests/test_owner.py` — 30 checks: name matching across scripts, that
   his message is never dropped, and that he outranks the queue
 - `python tests/test_language.py` — 51 checks: detection, the asymmetric
@@ -742,6 +744,115 @@ theme rather than a guessed one (§7).
 `REACTION_DECAY` if bursts still cluster; add angles to the lists in
 `game_angles.py` if a particular event feels stale. Adding an angle is a
 three-line change and needs no other edits.
+
+### What she calls them, and how that hardens
+
+| Deaths | Rank | Words |
+|---|---|---|
+| 1–3 | 1 | the piggies, these little piggies, the piglets |
+| 4–5 | 2 | these apes, the apes, the monkeys |
+| 6–8 | 3 | these creatures, the creatures, those things on your team |
+| 9+ | 4 | the hardstucks, these bronze hardstucks, your permanently bronze friends |
+
+Chosen on the PC per event (`tone.teammate_rank`) and injected as
+`teammate_words`. The system prompt used to carry one flat list she picked from
+at random, which gave her **no way to sound angrier at death nine than at death
+one** — a large part of "she was mostly dismissive". Three words per rank so a
+rank does not become its own repetition; the point is a rising register, not
+four fixed words.
+
+Keyed on *his* deaths rather than the team's, so her vocabulary hardens in step
+with her tone instead of on a separate clock. Thresholds live in
+`TEAMMATE_RANKS`, the words in `game_quotes.json` → `teammates.ranks`.
+
+Related, from the same report — *"some topics are said directly and not accepted
+as theme or tone"*: `GAME_EVENT_RULES` now ends with an explicit ban on
+restating the direction. She was narrating her own instructions rather than
+performing them.
+
+### Russian, half the time
+
+`LANG_AMBIENT_RU_CHANCE = 0.5`, rolled **once per game**, not per line. Per line
+would have her switching language between a drake and the death after it, which
+is not a bilingual streamer but a broken one. Per game gives a coherent sample
+to judge her Russian by, which is the point of turning it on. `0.0` disables it,
+`1.0` forces it.
+
+**Only her *ambient* voice — replies are a separate system and always were.**
+The two never interact:
+
+| Source | Language from | During a Russian game |
+|---|---|---|
+| game reactions, the cheer | the per-game roll | `ru` |
+| silence filler | `LANG_AMBIENT` | `en` (and it is disabled during games anyway) |
+| chat | detected from that person, sticky | whatever *they* wrote |
+| voice | what Whisper **heard** | whatever *he* spoke |
+
+So a Russian chatter gets Russian inside an English game, an English chatter
+gets English inside a Russian one, and with both in chat she answers each in
+their own language — one at a time, since the batch picks a single winner per
+window.
+
+**The angles, tones and themes stay English.** They are instructions to the
+model, not text she says, and a 201-language model takes English direction to
+Russian output without help — translating ~119 angles would be a lot of work for
+no gain. What *does* need translating is anything spoken verbatim, so the cheer
+and boo have `cheer_ru` / `boo_ru` pools; no model sits in that path.
+
+**Expect a Russian game to sound flatter.** Her persona is English throughout —
+banned openers, "fufu", the whole teammate ladder above — and none of it
+survives translation. That addendum is still the streamer's writing.
+
+### Hearing him — `sources/voice_in.py`
+
+Whisper on the CPU at int8 (§1: zero VRAM, which is what lets it sit beside the
+TTS on the 5080), fed by the voice gate.
+
+**No wake word**, deliberately. §8 planned openWakeWord to stop Whisper running
+continuously — the gate already does that job. It knows where a sentence starts
+and ends, so Whisper fires once per utterance, a few times a minute.
+
+**No second microphone stream.** The gate hands over the audio it already
+captured (`VoiceGate(on_utterance=...)`), with a ~256ms pre-roll because
+`FRAMES_TO_START` has already consumed the first syllable by the time it is
+confident. A second stream would give two components separate opinions about
+whether he is talking, and the one without the mute logic would transcribe her
+own voice through the speakers and answer it.
+
+Speech becomes a `voice` signal at `OWNER_PRIORITY`, flagged `is_owner`, so it
+gets the loyal framing and shares his memory thread with his chat. A one-slot
+queue keeps the newest utterance: if he is still talking while the last sentence
+transcribes, answering the previous one answers the wrong thing.
+
+Whisper hallucinates confidently on silence and reaches for the same handful of
+phrases every time ("You", "Thanks for watching", "Продолжение следует"). Those
+are filtered, along with anything under two words.
+
+**Russian and English both, per utterance.** Whisper is multilingual and Russian
+is one of its better-supported languages; `VOICE_STT_LANGUAGE = ""` auto-detects
+each utterance, so he can switch freely between sentences. Three things decide
+whether that actually works:
+
+- **Never use a `.en` model.** `tiny.en`, `base.en`, `small.en` are English-only
+  and will transcribe Russian as nonsense English.
+- **Size matters more for Russian than English.** `tiny` and `base` are
+  noticeably poor at it; `small` is the floor, `medium` if the CPU can take it.
+- **Code-switching inside one sentence is the real risk**, and it is his exact
+  case: an English client inside Russian speech, *"этот Garen меня убил"*.
+  Whisper picks one language per segment and transliterates the rest.
+  `VOICE_STT_PROMPT` biases the decoder toward her name and champion vocabulary,
+  which also stops "Ravyn" coming back as "Raven". Kept short — a long priming
+  prompt makes Whisper hallucinate its own vocabulary back on quiet audio.
+
+Detection reads the audio, so a very short utterance ("да") is the shaky case;
+pin `VOICE_STT_LANGUAGE` if it becomes a problem.
+
+`--no-hear` keeps the gate and drops transcription. A missing `faster-whisper`,
+a model that will not load, an empty transcript — each logs once and leaves her
+simply not hearing him.
+
+**Untested against a real microphone.** The logic has coverage; the audio path
+does not.
 
 ### The cheer and the boo
 
