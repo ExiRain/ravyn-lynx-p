@@ -808,9 +808,24 @@ survives translation. That addendum is still the streamer's writing.
 Whisper on the CPU at int8 (§1: zero VRAM, which is what lets it sit beside the
 TTS on the 5080), fed by the voice gate.
 
-**No wake word**, deliberately. §8 planned openWakeWord to stop Whisper running
-continuously — the gate already does that job. It knows where a sentence starts
-and ends, so Whisper fires once per utterance, a few times a minute.
+**The wake word is split in two**, because it was doing two unrelated jobs.
+Stopping Whisper running continuously is the *gate's* job now — it knows where a
+sentence starts and ends, so Whisper fires once per utterance, a few times a
+minute. Deciding whether she was *addressed* happens on the transcript instead
+(`VOICE_REQUIRE_NAME`): cheaper and far more reliable, since Whisper has already
+turned the audio into words and matching text beats matching a waveform.
+
+The second half is not optional in practice. Without it she answers **every**
+sentence the microphone hears — a gank call on Discord, swearing at the screen,
+someone else in the room. The gate cannot tell those from a question.
+
+`VOICE_NAMES` lists what "Ravyn" actually comes back as, including the Russian
+transliterations (`равин`, `рейвен`, `рэйвен`) and the English near-misses
+(`raven`, `ravin`). Substring match, so "Ravyn," and "Ravyn's" need no entries.
+Her name alone is enough — the two-word rule is relaxed when she is named,
+because "Ravyn?" is unmistakably her being spoken to while a bare "you" is
+Whisper hallucinating at room tone. Unaddressed speech is **logged** rather than
+dropped silently, so transcription can be seen working while she stays quiet.
 
 **No second microphone stream.** The gate hands over the audio it already
 captured (`VoiceGate(on_utterance=...)`), with a ~256ms pre-roll because

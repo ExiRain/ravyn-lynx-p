@@ -101,6 +101,26 @@ class Settings:
     # his mic and will be treated as him.
     VOICE_SPEAKER = "exiledra1n"
 
+    # Only answer when she is actually addressed.
+    #
+    # Without this she replies to EVERY sentence the microphone hears —
+    # including you calling a gank on Discord, or swearing at the screen. The
+    # gate cannot tell the difference; only the words can.
+    #
+    # This is the wake word after all, just applied to the transcript rather
+    # than to the audio. Cheaper and more reliable that way: Whisper has
+    # already done the hard part, and matching text beats matching a waveform.
+    VOICE_REQUIRE_NAME = True
+
+    # What "Ravyn" comes back as. Whisper will not spell it the way you do,
+    # and in Russian it transliterates — these are the forms to expect. Match
+    # is a substring test on the lowercased transcript, so "ravyn," and
+    # "ravyn's" are covered without listing them.
+    VOICE_NAMES = [
+        "ravyn", "raven", "ravin", "ravon", "revan",
+        "равин", "равен", "рейвен", "рэйвен", "рэвин", "рейвин",
+    ]
+
     # --- Game reaction rate ---
     # Chance she says anything at all about an event. Frequent, low-stakes
     # things get filtered here so she is not commentating every second.

@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.settings import get_settings                    # noqa: E402
 from orchestrator.priority_queue import SignalQueue      # noqa: E402
 from sources.voice_in import (                           # noqa: E402
-    HALLUCINATIONS, VoiceInput, looks_like_speech,
+    HALLUCINATIONS, VoiceInput, addressed_to_her, looks_like_speech,
 )
 
 S = get_settings()
@@ -60,6 +60,48 @@ def test_hallucination_filter():
     check("whitespace is not speech", not looks_like_speech("   "))
     check("the filter list is lowercase, as it is compared",
           all(h == h.lower() for h in HALLUCINATIONS))
+
+
+def test_she_answers_only_when_addressed():
+    """
+    The half of the wake word that survived.
+
+    Without it she replies to every sentence the microphone hears — a gank
+    call on Discord, swearing at the screen, a conversation with somebody in
+    the room. The gate cannot tell those from a question; only the words can.
+    """
+    print("\n--- she answers only when addressed ---")
+    check("the name gate is on by default", S.VOICE_REQUIRE_NAME)
+
+    for said in ("ravyn what do you think",
+                 "hey Ravyn are you awake",
+                 "Ravyn, look at this",
+                 "what do you make of that, Ravyn?"):
+        check(f"{said!r} reaches her", addressed_to_her(said))
+
+    # Whisper will not spell her name the way he does, and transliterates it
+    # in Russian. These are the forms to expect back.
+    for heard in ("Raven, look at that", "ravin you there",
+                  "равин что скажешь", "Рейвен ты тут", "рэйвен привет"):
+        check(f"{heard!r} still reaches her", addressed_to_her(heard))
+
+    # Everything else the mic catches during a game.
+    for overheard in ("go bot go bot now", "i need help top",
+                      "what the hell was that", "они идут на дракона",
+                      "ну и куда ты пошёл"):
+        check(f"{overheard!r} is left alone", not addressed_to_her(overheard))
+
+    # Her name alone is one word, and is unmistakably her being spoken to;
+    # a bare "you" is Whisper hallucinating at room tone.
+    check("her name on its own is enough",
+          looks_like_speech("Ravyn?", addressed=True))
+    check("but a stray token is not, even so",
+          not looks_like_speech("you", addressed=True))
+    check("and two words are still needed when she is not named",
+          not looks_like_speech("hello", addressed=False))
+
+    check("turning the gate off lets everything through",
+          addressed_to_her("go bot now") is False or not S.VOICE_REQUIRE_NAME)
 
 
 def test_submit_is_safe_from_the_audio_thread():
@@ -119,7 +161,7 @@ def test_signal_shape():
           signal.lang == "en", signal.lang)
 
     # Russian speech gets Russian back, on the same evidence.
-    voice._model = FakeModel("как тебе эта игра", "ru")
+    voice._model = FakeModel("равин как тебе эта игра", "ru")
     voice._handle([0.0] * 32000)
     ru = queue.pop()
     check("Russian speech is answered in Russian", ru.lang == "ru", ru.lang)
@@ -147,6 +189,11 @@ def test_signal_shape():
     voice._model = FakeModel("Thanks for watching!", "en")
     voice._handle([0.0] * 32000)
     check("a hallucinated transcript is dropped", queue.pop() is None)
+
+    # And speech that was clearly heard but not aimed at her.
+    voice._model = FakeModel("go bot go bot right now", "en")
+    voice._handle([0.0] * 32000)
+    check("a gank call never reaches the queue", queue.pop() is None)
 
 
 def test_degrades_to_silence():

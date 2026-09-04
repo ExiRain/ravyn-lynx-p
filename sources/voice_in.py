@@ -2,11 +2,20 @@
 Hearing him — Whisper on the CPU, fed by the voice gate.
 
 STATUS.md §8 wanted "wake word + STT so she can hear you (the gate is the
-prerequisite, and it exists)". This is that, minus the wake word, and the
-omission is deliberate: openWakeWord exists to stop Whisper running
-continuously, and the gate already does that job. It knows when a sentence
-starts and ends, so Whisper fires once per utterance — a few times a minute,
-not continuously — which is what the wake word was for.
+prerequisite, and it exists)". Both halves are here, but split in two, because
+the wake word was doing two unrelated jobs:
+
+  * Stopping Whisper running continuously — the GATE does that now. It knows
+    when a sentence starts and ends, so Whisper fires once per utterance, a few
+    times a minute.
+  * Deciding whether she was addressed — done on the TRANSCRIPT instead, by
+    `VOICE_REQUIRE_NAME`. Cheaper and far more reliable: Whisper has already
+    turned the audio into words, and matching text beats matching a waveform.
+
+The second half is not optional in practice. Without it she answers every
+sentence the microphone hears, including a gank call on Discord or swearing at
+the screen. The gate cannot tell those apart from a question; only the words
+can.
 
 No second microphone stream either. The gate hands over the audio it already
 captured (`VoiceGate(on_utterance=...)`). Two streams would disagree about
@@ -60,15 +69,29 @@ def _normalise(text: str) -> str:
 HALLUCINATIONS = {_normalise(h) for h in _HALLUCINATION_SOURCE}
 
 
-def looks_like_speech(text: str) -> bool:
-    """Reject Whisper's silence-hallucinations and single stray tokens."""
+def addressed_to_her(text: str) -> bool:
+    """Did he say her name? Substring, so "Ravyn," and "Ravyn's" both count."""
+    if not settings.VOICE_REQUIRE_NAME:
+        return True
+    lowered = (text or "").lower()
+    return any(name in lowered for name in settings.VOICE_NAMES)
+
+
+def looks_like_speech(text: str, addressed: bool = False) -> bool:
+    """
+    Reject Whisper's silence-hallucinations and single stray tokens.
+
+    `addressed` relaxes the two-word rule: "Ravyn?" on its own is one word and
+    is unmistakably her being spoken to, whereas a bare "you" is Whisper
+    hallucinating at room tone.
+    """
     cleaned = _normalise(text)
     if len(cleaned) < settings.VOICE_MIN_CHARS:
         return False
     if cleaned in HALLUCINATIONS:
         return False
-    # A real sentence has more than one word. "You" and "Bye" are the two
-    # Whisper reaches for most often on silence.
+    if addressed:
+        return True
     return len(cleaned.split()) >= 2
 
 
@@ -168,8 +191,16 @@ class VoiceInput:
         print(f"[hear] {seconds:.1f}s audio, {time.time() - t0:.1f}s transcribe "
               f"[{detected}]: {text[:70]}")
 
-        if not looks_like_speech(text):
+        addressed = addressed_to_her(text)
+
+        if not looks_like_speech(text, addressed):
             print("[hear]   ignored — not speech")
+            return
+
+        if not addressed:
+            # Heard clearly, just not aimed at her. Logged rather than silent
+            # so the transcription can be seen working while she stays quiet.
+            print("[hear]   heard, but she was not addressed — staying quiet")
             return
 
         self.queue.push(Signal(
