@@ -152,7 +152,12 @@ class VoiceInput:
 
         segments, info = self._model.transcribe(
             samples,
+            # None = detect per utterance. Whisper is multilingual and Russian
+            # is one of its better-supported languages, but detection reads the
+            # audio, so a very short utterance ("да") is the shaky case. Set
+            # VOICE_STT_LANGUAGE to pin it if that becomes a problem.
             language=settings.VOICE_STT_LANGUAGE or None,
+            initial_prompt=settings.VOICE_STT_PROMPT or None,
             beam_size=1,            # greedy: latency matters more than the
                                     # last point of accuracy on one sentence
             vad_filter=False,       # the gate already did that, and better

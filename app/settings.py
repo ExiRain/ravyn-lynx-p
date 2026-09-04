@@ -74,8 +74,25 @@ class Settings:
     # sentence rather than continuously — that is the job openWakeWord was
     # going to do, and the gate already does it.
     VOICE_INPUT_ENABLED = True
+    # MUST be a multilingual model. The ".en" variants (tiny.en, base.en,
+    # small.en) are English-only and will transcribe Russian as nonsense
+    # English — do not "optimise" to one of those.
+    #
+    # Size matters far more for Russian than for English: tiny and base are
+    # noticeably poor at it, so "small" is the sensible floor here even though
+    # "base" would do for English alone.
     VOICE_STT_MODEL = "small"       # tiny / base / small / medium
-    VOICE_STT_LANGUAGE = ""         # "" = auto-detect (he speaks RU and EN)
+    VOICE_STT_LANGUAGE = ""         # "" = auto-detect per utterance
+
+    # Biases the decoder toward words it should expect. Two jobs: it stops
+    # "Ravyn" coming back as "Raven" or "Равин", and it makes English champion
+    # names inside a Russian sentence ("этот Garen меня убил") survive instead
+    # of being transliterated — which is the realistic failure for a Russian
+    # speaker playing an English client.
+    #
+    # Kept short deliberately. A long prompt makes Whisper hallucinate its own
+    # vocabulary back at you on quiet audio.
+    VOICE_STT_PROMPT = "Ravyn. League of Legends: Riven, Garen, jungle, mid, ADC, support, gank, drake, baron."
     VOICE_MIN_CHARS = 4             # shorter than this is not a sentence
     VOICE_TTL = 45.0                # an answer this late answers nothing
 

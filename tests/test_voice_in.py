@@ -124,6 +124,25 @@ def test_signal_shape():
     ru = queue.pop()
     check("Russian speech is answered in Russian", ru.lang == "ru", ru.lang)
 
+    # The decoder is biased toward her name and champion names, so "Ravyn"
+    # does not come back as "Raven" and an English champion inside a Russian
+    # sentence survives instead of being transliterated.
+    seen = {}
+    class RecordingModel(FakeModel):
+        def transcribe(self, samples, **kw):
+            seen.update(kw)
+            return super().transcribe(samples, **kw)
+    voice._model = RecordingModel("ravyn what do you think", "en")
+    voice._handle([0.0] * 32000)
+    queue.pop()
+    check("the language is auto-detected, not assumed",
+          seen.get("language") is None, str(seen.get("language")))
+    check("and the decoder is primed with her name",
+          "Ravyn" in (seen.get("initial_prompt") or ""),
+          str(seen.get("initial_prompt"))[:60])
+    check("the priming prompt stays short enough not to be hallucinated back",
+          len(S.VOICE_STT_PROMPT) < 200, str(len(S.VOICE_STT_PROMPT)))
+
     # And a hallucination never becomes a signal.
     voice._model = FakeModel("Thanks for watching!", "en")
     voice._handle([0.0] * 32000)
