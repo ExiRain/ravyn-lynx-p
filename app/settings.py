@@ -230,7 +230,23 @@ class Settings:
     # PERSONA is the real gap — banned openers, "fufu", the teammate ladder are
     # all English and none of them survive translation, so expect a Russian
     # game to sound flatter than an English one until that addendum exists.
-    LANG_AMBIENT_RU_CHANCE = 0.5
+    # OFF while her English is still being tuned.
+    #
+    # Turned on at 0.5 for one session and turned straight back off, for a good
+    # reason: there was no measurement point. Her English is still moving every
+    # day, so a Russian game changed two things at once and neither could be
+    # judged. The Russian was also visibly NOT her — the persona is English, so
+    # what came out was the model's own register using vocabulary that has no
+    # equivalent in her English voice, over a Russian-accented clone of an
+    # English reference sample.
+    #
+    # Raise it again once English is stable and the Russian persona addendum
+    # exists. Everything behind it still works: the per-game roll, the ru cheer
+    # and boo pools, the TTS language mapping.
+    #
+    # This does NOT affect replies. Someone who writes or speaks Russian is
+    # still answered in Russian — that is LANG_REPLY below, a separate system.
+    LANG_AMBIENT_RU_CHANCE = 0.0
 
     # Reply: how she answers someone who spoke to her.
     #   "en"        — always English

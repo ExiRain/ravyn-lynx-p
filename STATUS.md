@@ -770,13 +770,29 @@ as theme or tone"*: `GAME_EVENT_RULES` now ends with an explicit ban on
 restating the direction. She was narrating her own instructions rather than
 performing them.
 
-### Russian, half the time
+### Russian — replies only, for now
 
-`LANG_AMBIENT_RU_CHANCE = 0.5`, rolled **once per game**, not per line. Per line
-would have her switching language between a drake and the death after it, which
-is not a bilingual streamer but a broken one. Per game gives a coherent sample
-to judge her Russian by, which is the point of turning it on. `0.0` disables it,
-`1.0` forces it.
+`LANG_AMBIENT_RU_CHANCE = 0.0`. **Her own voice is English.**
+
+It ran at 0.5 for one session and went straight back off, for a reason worth
+keeping: **there was no measurement point.** Her English is still moving every
+day, so a Russian game changed two things at once and neither could be judged.
+The Russian was also visibly not *her* — the persona is English, so what came
+out was the model's own register, using vocabulary with no equivalent in her
+English voice, spoken by a Russian-accented clone of an English reference
+sample.
+
+The order that follows from that: stabilise English → write the Russian persona
+addendum → turn the roll back on. Everything behind it still works untouched —
+the per-game roll, the `cheer_ru` / `boo_ru` pools, the TTS language mapping.
+One number.
+
+**Replies are unaffected and stay on.** Someone who writes or speaks Russian is
+still answered in Russian; that is `LANG_REPLY = "detect"`, a separate system
+that the ambient roll never touched. When it was rolled at 0.5 it was rolled
+**once per game**, not per line — per line would have had her switching between
+a drake and the death after it, which is not a bilingual streamer but a broken
+one.
 
 **Only her *ambient* voice — replies are a separate system and always were.**
 The two never interact:

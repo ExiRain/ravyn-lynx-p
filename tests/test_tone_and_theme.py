@@ -300,6 +300,18 @@ def test_russian_mixing():
     check("the chance is a probability", 0.0 <= S.LANG_AMBIENT_RU_CHANCE <= 1.0,
           str(S.LANG_AMBIENT_RU_CHANCE))
 
+    # Off by default while her English is still moving. Tried at 0.5 for one
+    # session and turned back off: with no stable English baseline it changed
+    # two things at once and neither could be judged.
+    check("her own voice is English by default",
+          S.LANG_AMBIENT_RU_CHANCE == 0.0 and S.LANG_AMBIENT == "en",
+          f"{S.LANG_AMBIENT_RU_CHANCE} / {S.LANG_AMBIENT}")
+
+    # But answering a Russian speaker in Russian is a separate system and
+    # stays on. Turning the ambient roll off must never touch it.
+    check("replies still follow whoever spoke", S.LANG_REPLY == "detect",
+          S.LANG_REPLY)
+
     # A quote is spoken verbatim, so a Russian game needs Russian ones — there
     # is no model anywhere in that path to translate them.
     data = json.loads((Path(__file__).resolve().parent.parent
