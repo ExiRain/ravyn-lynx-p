@@ -22,6 +22,7 @@ from pathlib import Path
 from threading import Thread
 
 from app.settings import get_settings
+from orchestrator import session_log
 from orchestrator.identity import Identity
 from orchestrator.priority_queue import SignalQueue
 from orchestrator.dispatcher import Dispatcher
@@ -58,6 +59,15 @@ def main():
     if tts_enabled:
         print(f"  Audio: ws://localhost:{settings.AUDIO_SERVER_PORT}/ws/audio")
     print("=" * 50)
+
+    # --- Session log ---
+    # Opened before anything can dispatch: a signal that goes out before this
+    # exists is a line missing from the transcript. See tools/analyze_session.py.
+    session_log.init(
+        Path(__file__).resolve().parent.parent / settings.SESSION_LOG_DIR,
+        enabled=settings.SESSION_LOG_ENABLED,
+        full_context=settings.SESSION_LOG_FULL_CONTEXT,
+    )
 
     # --- Orchestrator core ---
     # Built first: the response listener clears its busy flag, so it needs

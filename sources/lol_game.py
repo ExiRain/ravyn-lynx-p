@@ -1066,6 +1066,12 @@ class LolGameSource:
             "trigger": "game_event",
             "game": "league_of_legends",
             "event_type": event_type,
+            # Which pool the seed line came from. The notebook ignores it;
+            # the session log keeps it, because "ally_death_bleeding fired
+            # nine times and she said the same thing" is a sentence you can
+            # only write if the key is on the record.
+            "config_key": config_key,
+            "death_count": self._death_count,
             "player_name": self._player_summoner,
             "player_champion": self._player_champion,
         }

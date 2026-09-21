@@ -30,6 +30,7 @@ from typing import Callable
 import pika
 
 from app.settings import get_settings
+from orchestrator import session_log
 from services.tts_engine import TTSEngine
 from services import audio_server
 
@@ -175,6 +176,7 @@ def start_response_listener(
             # for the rest of the stream over one bad response.
             print(f"[{ts}][response] Handler error:")
             traceback.print_exc()
+            session_log.get().finished("error")
         finally:
             # busy must clear even if handling blew up
             if on_complete:
@@ -195,13 +197,20 @@ def start_response_listener(
 
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
+        # Recorded before cleaning, so the log shows what the notebook sent
+        # rather than what survived the PC's own stripping.
+        session_log.get().responded(text, mood=mood, tired=tired, lang=lang,
+                                    event_type=event_type)
+
         text = _clean_for_tts(text)
         if not text:
             print(f"[{ts}][response] Empty response — nothing to say")
+            session_log.get().finished("empty")
             return
 
         if tts is None:
             print(f"[{ts}][response] (silent) {text}")
+            session_log.get().finished("silent")
             return
 
         # face prep for subs/follows — lands before the audio does
@@ -284,11 +293,13 @@ def start_response_listener(
 
         if opening is None:
             print("[response] Nothing synthesised — saying nothing")
+            session_log.get().finished("tts_failed")
             return
 
         if not _wait_for_gate():
             print(f"[response] Dropped — you are still talking after "
                   f"{settings.VOICE_MAX_DEFER:.0f}s: {opening[0][:50]}")
+            session_log.get().finished("dropped_gate")
             return
 
         # From here she is committed to the line, so the mic goes deaf until
@@ -300,6 +311,7 @@ def start_response_listener(
         try:
             _play(opening, sentences, mood, tired, lang, had_clients)
         finally:
+            session_log.get().finished("spoken")
             if voice_gate is not None:
                 voice_gate.set_muted(False)
 
@@ -334,6 +346,9 @@ def start_response_listener(
                 first_audio_at = time.time()
 
             total_duration += duration
+
+            session_log.get().spoke_sentence(sentence, gen_s=gen_s,
+                                             audio_s=duration)
 
             print(f"[response]   [{idx}/{total}] "
                   f"gen {gen_s:.2f}s, audio {duration:.2f}s: {sentence[:50]}")

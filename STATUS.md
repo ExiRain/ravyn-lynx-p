@@ -179,6 +179,10 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
+- `python tests/test_session_log.py` — 55 checks: one record per line whatever
+  its fate, that a logging failure cannot raise into the response thread,
+  rebuilding a session from scrollback, and that the four real death reactions
+  in the sample are still counted as one repeat
 
 On the notebook: `python tests/test_game_memory.py` — 14 checks that game events
 are kept out of conversation history.
@@ -679,6 +683,61 @@ in one fight now produce one comment.
 **3. No roles, so lanes were guesswork.** Fixed by `position` — see §7 "Role
 detection".
 
+### Measuring it instead of remembering it
+
+Everything above was found by watching a stream and forming an impression.
+That works once. "She felt repetitive" cannot be handed to the next change as
+a target, and the terminal cannot settle the argument either — it prints
+`sentence[:50]`, so the four deaths below look like four different lines.
+
+Every run now writes `logs/session-<date>-<time>.jsonl`
+(`orchestrator/session_log.py`): one record per dispatched signal, carrying the
+trigger, the `config_key`, the `angle_id`, the tone, the death count, her full
+reply, the sentences that were synthesised, and the outcome — `spoken`,
+`dropped_gate`, `empty`, `tts_failed` or `lost`. The request side is written by
+the dispatcher and the response side by the response listener; exactly one
+signal is in flight at a time, so the pending record *is* the correlation and
+no id has to travel to the notebook and back. Nothing in that file is allowed
+to raise: a logging bug must not be able to mute her.
+
+`python tools/analyze_session.py` reads it back:
+
+- **repeat rate** — the share of her lines that echo an earlier one, at a
+  deliberately loose similarity (0.50). She is supposed to rephrase rather than
+  repeat, and the failure being measured is a model that varies four words and
+  says the same thing. Two lines that open on the same five content words count
+  as a repeat whatever the tail does, because that is what a listener notices.
+- **knob attribution** — every echo is charged to the `config_key`, `angle_id`,
+  tone and source that produced it, plus how much of each angle pool the
+  session actually reached. A repetition number with no attribution just says
+  again that she felt repetitive.
+- **heat** — how many lines were aimed at him, the longest unbroken run of
+  them, the teammate vocabulary by count, and the standing grievances she keeps
+  returning to.
+
+A session that exists only as scrollback is not lost: `tools/console_import.py`
+rebuilds one from a saved terminal log, marking every record `truncated`
+because her lines are cut at fifty characters there.
+
+**The first measurement, on the 2026-09-21 session** (23 lines, one losing
+game, English):
+
+| | |
+|---|---|
+| repeat rate | **23%** |
+| the worst group | four death reactions, all "Limit testing doesn't mean you get to run up and die… you keep making the same mistake of walking straight into…" |
+| phrases | "games are won by" in **6** lines, "you keep making the same mistake of walking" in 4 |
+| `MyDeath` | 10 lines, **5 of 9 angles** — the pool had room and was not reached |
+| tone | **10 of 10** death verdicts were `sharp` or `roast` |
+| heat | **64%** of her lines aimed at him, **7 in a row** at the worst |
+
+Two findings there are not about repetition at all. The tone ladder refuses
+*consecutive* roasts but nothing bounds the share of a session spent at the top
+of it, and fifteen deaths in one game means every verdict the rulebook has to
+give is a hard one. And `theme_top_comfort` — the angle that exists to be the
+soft one — produced one of the four identical roasts, because the tone it was
+handed overrode what the angle was for.
+
 ### Tone — how hard she goes
 
 The streamer's rulebook, in `orchestrator/tone.py`:
@@ -1005,6 +1064,11 @@ champion tags are facts about the game. Different lifecycles.
 - `ravyn-nb` has no PR
 
 **Small**
+- Nothing bounds the *share* of a session spent at the top of the tone ladder —
+  the first measured session was 10/10 deaths at `sharp` or `roast`, 64% of her
+  lines aimed at him, 7 in a row. See §7 "Measuring it instead of remembering it"
+- `MyDeath` reached 5 of its 9 angles over 10 lines in that session — the pool
+  is not the constraint, whatever is choosing from it is
 - Move the eleven older test suites out of the scratchpad into the repos
 - Stray submodule in `ravyn-nb` (gitlink at `ravyn-nb/`, no `.gitmodules`)
 - `quote` signals round-trip to the notebook just to be handed back — they could

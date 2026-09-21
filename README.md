@@ -73,9 +73,18 @@ services/
 sources/
   silence_filler.py    timer-based — improv seeds (LLM) or quotes (TTS direct)
 
+orchestrator/
+  session_log.py       every dispatched signal + her full reply, as JSONL
+
+tools/
+  analyze_session.py   repetition, knob attribution and heat, per session
+  console_import.py    rebuilds a session from terminal scrollback
+
 data/
   stunts.json          improv seeds for LLM to riff on
   quotes.json          literal lines sent straight to TTS
+
+logs/                  session-<date>-<time>.jsonl, gitignored
 ```
 
 ## RabbitMQ Queues
@@ -197,6 +206,37 @@ Precedence: `Signal.lang` (a source that knows) → `SPEAKER_LANG` → ambient �
 Note that her persona is written in English — the banned openers, "fufu", the
 teammate vocabulary. None of that survives translation, so Russian output
 currently loses those voice rules until a Russian persona addendum exists.
+
+## Session log
+
+The terminal prints `sentence[:50]`, so four near-identical roasts read as four
+different lines and scroll away regardless. Every run therefore writes
+`logs/session-<date>-<time>.jsonl` — one JSON line per dispatched signal, with
+the trigger, the angle, the tone, her full reply, what was actually synthesised
+and whether any of it was heard.
+
+```powershell
+python tools/analyze_session.py                     # newest session
+python tools/analyze_session.py --lines             # the full transcript
+python tools/analyze_session.py new.jsonl --compare old.jsonl
+python tools/analyze_session.py scrollback.txt      # a pasted terminal log
+```
+
+The report answers three questions:
+
+| | |
+|---|---|
+| **repeat rate** | share of her lines that echo an earlier line this session |
+| **knobs** | which `config_key` / `angle_id` / tone produced those echoes, and how much of each angle pool the session actually reached |
+| **heat** | how many lines were aimed at him, the longest unbroken run of them, and the phrasings she keeps coming back to |
+
+A session that only exists as scrollback can still be read: pass the saved
+console output and it is reconstructed, with her lines cut at fifty characters
+and every record flagged `truncated`.
+
+Off with `SESSION_LOG_ENABLED = False`. `SESSION_LOG_FULL_CONTEXT = True` also
+keeps the SITUATION block and the angle instruction verbatim, for when one
+specific line needs explaining.
 
 ## Configuration
 
