@@ -37,6 +37,8 @@ import queue
 import threading
 import time
 
+import re
+
 from app.settings import get_settings
 from orchestrator import language
 from orchestrator.models import Signal
@@ -49,6 +51,12 @@ settings = get_settings()
 # while the last sentence is being transcribed, the newer one wins — an
 # utterance that has been waiting is already stale by the time she could answer.
 QUEUE_DEPTH = 1
+
+# How much of an utterance has to come from the priming prompt before it is
+# treated as an echo rather than speech. Deliberately high: he does talk about
+# champions, and throwing away a real sentence is worse than letting one echo
+# through. Three words minimum on top of it.
+PROMPT_ECHO_RATIO = 0.7
 
 # Whisper hallucinates confidently on silence, and it hallucinates the same
 # handful of things. These are the ones that come back from an empty or noisy
@@ -68,6 +76,39 @@ def _normalise(text: str) -> str:
 # the punctuation here meant "Продолжение следует..." never matched its own
 # entry once the trailing dots were stripped off the incoming text.
 HALLUCINATIONS = {_normalise(h) for h in _HALLUCINATION_SOURCE}
+
+
+def is_prompt_echo(text: str, prompt: str) -> bool:
+    """
+    Did Whisper read the priming prompt back to us instead of transcribing?
+
+    It does this on quiet or ambiguous audio, and it is the failure the prompt
+    comment already warned about — it just turned out to be worse than "noise
+    in the log". The Russian prompt came back as
+
+        Равин, Ривен, лес, мид, саппорт, дракон, барон, барон...
+
+    which contains her name, so it passed the name gate, reached the LLM as a
+    question, and she answered it: "Ты хочешь список героев? Ладно..."
+
+    Checked by overlap rather than equality, because the echo is never exact —
+    it drops the punctuation, reorders, and loops the last word.
+    """
+    words = _words(text)
+    if len(words) < 3:
+        # Two words cannot be told apart from him actually saying them.
+        return False
+
+    primed = _words(prompt)
+    if not primed:
+        return False
+
+    shared = sum(1 for w in words if w in primed)
+    return shared / len(words) >= PROMPT_ECHO_RATIO
+
+
+def _words(text: str) -> set:
+    return {w for w in re.findall(r"\w+", (text or "").lower()) if len(w) > 1}
 
 
 def addressed_to_her(text: str) -> bool:
@@ -237,6 +278,17 @@ class VoiceInput:
 
         print(f"[hear] {seconds:.1f}s audio, {time.time() - t0:.1f}s transcribe "
               f"[{detected}]: {text[:70]}")
+
+        # Before anything else: Whisper reading our own priming prompt back.
+        # It contains her name, so it would otherwise pass the name gate and
+        # be answered as a question.
+        # Against every prompt, not just this language's: Whisper picks the
+        # language it thinks it heard, and an echo can come back labelled as
+        # the other one.
+        all_prompts = " ".join(settings.VOICE_STT_PROMPTS.values())
+        if is_prompt_echo(text, all_prompts):
+            print("[hear]   ignored — that is our own priming prompt echoed back")
+            return
 
         addressed = addressed_to_her(text)
 

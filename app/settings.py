@@ -108,9 +108,14 @@ class Settings:
     # Russian one anchors the script and spells her name the way it sounds.
     #
     # Short on purpose: a long prompt gets hallucinated back on quiet audio.
+    # Shortened after one of these came back as a transcript in its entirety.
+    # Every word here is a word Whisper can hallucinate at you on quiet audio,
+    # so the list is now only what it cannot get right on its own — her name.
+    # Champion names were pulling their weight much less than the risk they
+    # carried, and a list of nouns is exactly the shape that loops.
     VOICE_STT_PROMPTS = {
-        "en": "Ravyn. League of Legends: Riven, Garen, jungle, mid, support, drake, baron.",
-        "ru": "Равин. Лига Легенд: Ривен, Гарен, лес, мид, саппорт, дракон, барон.",
+        "en": "Ravyn.",
+        "ru": "Равин.",
     }
     VOICE_MIN_CHARS = 4             # shorter than this is not a sentence
     VOICE_TTL = 45.0                # an answer this late answers nothing

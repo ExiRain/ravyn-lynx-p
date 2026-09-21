@@ -104,6 +104,55 @@ def test_she_answers_only_when_addressed():
           addressed_to_her("go bot now") is False or not S.VOICE_REQUIRE_NAME)
 
 
+def test_priming_prompt_is_not_speech():
+    """
+    Whisper reads the priming prompt back on quiet audio, and the prompt
+    contains her name — so the echo passed the name gate, reached the LLM as a
+    question, and she answered it.
+
+    Live:
+        [dispatch] source=voice text=Равин, Ривен, лес, мид, саппорт, дракон,
+                   барон, барон...
+        [response] Ты хочешь список героев? Ладно...
+
+    Checked by word overlap, because the echo is never exact — it loses the
+    punctuation, reorders, and loops the last word.
+    """
+    print("\n--- our own prompt read back to us ---")
+    from sources.voice_in import is_prompt_echo
+
+    # The prompt that actually caused it, before it was shortened.
+    old_prompt = ("Равин. Лига Легенд: Ривен, Гарен, лес, мид, саппорт, "
+                  "дракон, барон. Ravyn. League of Legends: Riven, Garen, "
+                  "jungle, mid, support, drake, baron.")
+
+    for echo in ("Равин, Ривен, лес, мид, саппорт, дракон, барон, барон.",
+                 "лес мид саппорт дракон",
+                 "Ravyn. League of Legends: Riven, Garen, jungle, mid."):
+        check(f"{echo[:36]!r} is an echo", is_prompt_echo(echo, old_prompt))
+
+    # Real speech must survive, including speech about champions.
+    for real in ("Равин, что ты думаешь об этой игре?",
+                 "Равин, этот Гарен меня убил в лесу",
+                 "ravyn what do you think of this jungle pick",
+                 "I went mid and it went badly"):
+        check(f"{real[:36]!r} is not an echo",
+              not is_prompt_echo(real, old_prompt))
+
+    # Too short to tell apart from him saying those words.
+    check("two words are never called an echo",
+          not is_prompt_echo("Равин, дракон", old_prompt))
+    check("an empty prompt cannot match anything",
+          not is_prompt_echo("Равин, Ривен, лес", ""))
+
+    # And the prompt is now short enough that there is little to echo.
+    joined = " ".join(S.VOICE_STT_PROMPTS.values())
+    check("the priming prompt is down to her name",
+          len(joined) < 40, f"{len(joined)} chars: {joined}")
+    check("which is still the one word Whisper cannot get alone",
+          "Ravyn" in joined and "Равин" in joined)
+
+
 def test_submit_is_safe_from_the_audio_thread():
     print("\n--- submit never blocks the audio callback ---")
     voice = VoiceInput(SignalQueue())
@@ -182,6 +231,9 @@ def test_signal_shape():
     check("and the decoder is primed with her name",
           "Ravyn" in (seen.get("initial_prompt") or ""),
           str(seen.get("initial_prompt"))[:60])
+    check("but with little else, because every word can be echoed back",
+          len(seen.get("initial_prompt") or "") < 40,
+          str(seen.get("initial_prompt")))
     check("priming prompts stay short enough not to be hallucinated back",
           all(len(p) < 200 for p in S.VOICE_STT_PROMPTS.values()))
     check("there is a prompt per language, so an all-Latin one cannot drag "
@@ -324,6 +376,7 @@ def test_gate_capture_contract():
 
 def main():
     test_hallucination_filter()
+    test_priming_prompt_is_not_speech()
     test_submit_is_safe_from_the_audio_thread()
     test_signal_shape()
     test_language_is_constrained_to_two()

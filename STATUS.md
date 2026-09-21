@@ -895,6 +895,24 @@ Four fixes, in order of how much each mattered:
    Polish above. `VOICE_STT_PROMPTS` has a Cyrillic one for Russian that also
    spells her name the way it sounds.
 
+**The priming prompt then came back as a transcript**, which is worse than the
+noise the comment warned about:
+
+```
+[dispatch] source=voice text=Равин, Ривен, лес, мид, саппорт, дракон, барон, барон...
+[response] Ты хочешь список героев? Ладно...
+```
+
+It contains her name, so it passed the name gate, reached the LLM as a question,
+and she answered it. Two changes: `is_prompt_echo` rejects a transcript whose
+words are ≥70% the priming prompt (overlap, not equality — the echo loses
+punctuation, reorders, and loops the last word), and the prompts are cut to
+**her name alone**. Every word in there is a word Whisper can hallucinate at
+you, and a list of nouns is exactly the shape that loops; the champion names
+were carrying far less weight than the risk. Three words minimum before
+anything is called an echo, because he does talk about champions and throwing
+away a real sentence is worse.
+
 Two levers left if accuracy still disappoints, in order:
 `VOICE_STT_BEAM` is 5 now (Whisper's own default, noticeably better on Russian
 than greedy), then `VOICE_STT_MODEL = "medium"` — size matters far more for
