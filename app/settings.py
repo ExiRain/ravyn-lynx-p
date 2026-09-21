@@ -298,6 +298,25 @@ class Settings:
     AUDIO_SERVER_HOST = "0.0.0.0"
     AUDIO_SERVER_PORT = 9000                # Godot connects to ws://localhost:9000/ws/audio
 
+    # --- Session log ---
+    # Every dispatched signal and her full reply to it, one JSON line each,
+    # in logs/session-<date>-<time>.jsonl. The terminal truncates her lines at
+    # fifty characters, which is why three near-identical roasts read as three
+    # different ones; this is the record that does not.
+    #
+    #     python tools/analyze_session.py            # newest session
+    #
+    # Cheap: a few hundred lines of JSON per stream, written on the response
+    # thread, and every call site swallows its own errors.
+    SESSION_LOG_ENABLED = True
+    SESSION_LOG_DIR = "logs"
+
+    # Also keep the SITUATION block, the angle instruction and the tone
+    # instruction verbatim on every record. Answers "what exactly was she
+    # looking at when she said that" at the cost of a few KB per event —
+    # turn it on when a specific line needs explaining, off for counting.
+    SESSION_LOG_FULL_CONTEXT = False
+
 
 def get_settings():
     return Settings()

@@ -6,7 +6,7 @@ import threading
 
 import pika
 
-from orchestrator import language
+from orchestrator import language, session_log
 from orchestrator.models import Signal
 from orchestrator.priority_queue import SignalQueue
 from app.settings import get_settings
@@ -194,6 +194,11 @@ class Dispatcher:
             routing_key=self.settings.QUEUE_REQUEST,
             body=payload,
         )
+
+        # Opens this signal's record in the session log. It is closed by the
+        # response listener once her line has been said, dropped or lost —
+        # see orchestrator/session_log.py.
+        session_log.get().dispatched(signal)
 
         print(f"[dispatch] source={signal.source}  mode={signal.mode}  "
               f"lang={signal.lang}  skip_llm={signal.skip_llm}  "
