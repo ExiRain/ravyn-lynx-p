@@ -4,3 +4,7 @@ __pycache__/
 *.log
 .env
 logs/
+# ...except the running table of every game. Numbers and her own phrasing
+# only — no voice transcripts, no viewer names — so it is safe in a public
+# repo, and it is the thing worth keeping across machines.
+!logs/history.csv

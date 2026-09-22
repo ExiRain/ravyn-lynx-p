@@ -179,7 +179,7 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
-- `python tests/test_session_log.py` — 55 checks: one record per line whatever
+- `python tests/test_session_log.py` — 78 checks: one record per line whatever
   its fate, that a logging failure cannot raise into the response thread,
   rebuilding a session from scrollback, and that the four real death reactions
   in the sample are still counted as one repeat
@@ -718,6 +718,35 @@ to raise: a logging bug must not be able to mute her.
 A session that exists only as scrollback is not lost: `tools/console_import.py`
 rebuilds one from a saved terminal log, marking every record `truncated`
 because her lines are cut at fifty characters there.
+
+**Nobody runs the command, so she prints it herself.** A number that requires
+remembering a second terminal after a game is a number that does not get
+looked at. `GameStart` writes a marker, and twenty seconds after the Live
+Client API goes away — long enough for her reaction to the last death to
+finish playing, since the game ends mid-sentence — the poll thread prints the
+short version and appends a row to `logs/history.csv`:
+
+```
+[session] Game over: 22 lines, 5 echoes (23%), 64% hot, longest streak 7
+[session]   MyDeath: 5/9 angles used, 3 repeats
+[session]   most reused: "games are won by" x6
+```
+
+The grace period fires from the **idle** branch of the source's loop, not the
+poll branch: once the game is gone the loop switches to detection and
+`_poll_game` is never called again, so a summary scheduled there would never
+land. The same three lines print for the whole stream on shutdown.
+
+A single session says what happened that night; the history table says whether
+a change held. Its `log` column names the file to open when a row looks wrong,
+which is the whole workflow: watch the table, open the outlier. `history.csv`
+is the one thing under `logs/` that is **not** gitignored — numbers and her own
+phrasing only, no voice transcripts and no viewer names, so it is safe in a
+public repo where a session file is not.
+
+The measurement moved to `orchestrator/session_metrics.py` when this landed.
+The app needs the same numbers as the CLI and must not import from `tools/`;
+two implementations of "what counts as a repeat" would disagree within a week.
 
 **The first measurement, on the 2026-09-21 session** (23 lines, one losing
 game, English):

@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orchestrator.models import Signal                             # noqa: E402
 from orchestrator import session_log                               # noqa: E402
+from orchestrator import session_metrics                           # noqa: E402
 from tools import analyze_session, console_import                  # noqa: E402
 
 FAILURES: list[str] = []
@@ -350,6 +351,143 @@ def test_reads_its_own_log():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ============================================ the summary she prints herself
+def replay(log, records) -> None:
+    """Push a parsed session through the log the way the live path does."""
+    for r in records:
+        ctx = {k: r[k] for k in ("event_type", "config_key", "angle_id",
+                                 "death_count") if k in r}
+        tone = r.get("tone") or r.get("verdict_tone")
+        if tone:
+            ctx["tone"] = tone
+        log.dispatched(Signal(source=r["source"], priority=3, lang="en",
+                              text=r.get("trigger_text", ""), context=ctx))
+        log.responded(r.get("said", ""), mood=r.get("mood"))
+        for sentence in r.get("sentences", []):
+            log.spoke_sentence(sentence["text"], audio_s=sentence["audio_s"])
+        log.finished(r.get("outcome", "spoken"))
+
+
+def test_markers_scope_the_summary():
+    print("\n--- a game summary covers that game, not the whole stream ---")
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        log = session_log.init(tmp, enabled=True)
+
+        log.dispatched(game_signal("before the game"))
+        log.responded("Something said while nobody was playing.")
+        log.finished("spoken")
+
+        log.mark("game_start", champion="Anivia")
+        replay(log, console_import.parse(SAMPLE))
+
+        everything = log.read_back()
+        this_game = log.read_back(since_marker="game_start")
+
+        check("the whole session is readable back", len(everything) == 7,
+              str(len(everything)))
+        check("a marker scopes it to one game", len(this_game) == 6,
+              str(len(this_game)))
+        check("the pre-game line is excluded",
+              all("nobody was playing" not in (r.get("said") or "")
+                  for r in this_game))
+        check("markers are not counted as lines",
+              all(r.get("kind") == "line" for r in everything))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_report_prints_and_records():
+    print("\n--- game end: three lines in the console, one row in history ---")
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        log = session_log.init(tmp, enabled=True)
+        log.mark("game_start")
+        replay(log, console_import.parse(SAMPLE))
+
+        summary = log.report(scope="game", since_marker="game_start")
+        check("a summary comes back", summary is not None)
+        # Five, not six: the line dropped at the voice gate was never heard,
+        # so it cannot count towards how repetitive the game sounded.
+        check("it counts the lines she was actually heard saying",
+              summary["lines"] == 5, str(summary["lines"]))
+        check("it counts the echoes", summary["echoes"] >= 3,
+              str(summary["echoes"]))
+        check("repeat rate is a percentage, not a fraction",
+              0 < summary["repeat_pct"] <= 100, str(summary["repeat_pct"]))
+        check("it names the pool that repeated",
+              summary["worst_key"] == "MyDeath", str(summary["worst_key"]))
+        check("it names the log file to hand over",
+              summary["log"] == log.path.name)
+
+        lines = session_metrics.console_lines(summary)
+        check("at most three console lines", 1 <= len(lines) <= 3, str(lines))
+        check("the first line carries the headline numbers",
+              "echoes" in lines[0] and "%" in lines[0], lines[0])
+        check("MyDeath is not named twice in one line",
+              all(line.count("MyDeath") <= 1 for line in lines), str(lines))
+
+        history = tmp / "history.csv"
+        rows = session_metrics.read_history(history)
+        check("one row per game, with a header", len(rows) == 1, str(rows))
+        check("the row carries the repeat rate",
+              rows[0]["repeat_pct"] == str(summary["repeat_pct"]))
+
+        log.mark("game_end")
+        log.report(scope="session")
+        rows = session_metrics.read_history(history)
+        check("the session row is appended, not overwritten", len(rows) == 2)
+        check("scopes are distinguishable",
+              [r["scope"] for r in rows] == ["game", "session"])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_summary_is_honest_about_a_short_game():
+    print("\n--- too few lines to mean anything ---")
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        log = session_log.init(tmp, enabled=True)
+        log.mark("game_start")
+        for i in range(3):
+            log.dispatched(game_signal(f"death {i}"))
+            log.responded(f"A different remark, number {i}, about nothing.")
+            log.finished("spoken")
+
+        summary = log.report(scope="game", since_marker="game_start")
+        lines = session_metrics.console_lines(summary)
+        check("it says so rather than reporting a percentage",
+              any("too few" in line for line in lines), str(lines))
+        check("the row is still written",
+              len(session_metrics.read_history(tmp / "history.csv")) == 1)
+
+        empty = session_log.init(Path(tempfile.mkdtemp()), enabled=True)
+        check("a game where she said nothing reports nothing",
+              empty.report(scope="game") is None)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_reporting_cannot_break_a_stream():
+    print("\n--- the summary is not allowed to raise either ---")
+    log = session_log.SessionLog("", enabled=False)
+    check("a disabled log reports nothing, quietly",
+          log.report(scope="game") is None)
+    log.mark("game_start")
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        live = session_log.init(tmp, enabled=True)
+        live.path.write_text("not json at all\n{\"kind\": \"line\"}\n",
+                             encoding="utf-8")
+        check("a corrupt line is skipped, not fatal",
+              isinstance(live.read_back(), list))
+        check("a summary over junk does not raise",
+              live.report(scope="game") is None or True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     test_writes_one_record_per_line()
     test_outcomes()
@@ -359,6 +497,10 @@ def main() -> int:
     test_finds_the_repeats()
     test_similarity_is_not_a_hair_trigger()
     test_reads_its_own_log()
+    test_markers_scope_the_summary()
+    test_report_prints_and_records()
+    test_summary_is_honest_about_a_short_game()
+    test_reporting_cannot_break_a_stream()
 
     print()
     if FAILURES:
