@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass, field
 
 
@@ -20,6 +21,12 @@ class Signal:
                                         # when the source actually knows.
     context: dict = field(default_factory=dict)
 
+    # What joins this signal's record on the PC to the notebook's record of
+    # the prompt it built and the answer it got back. The two logs measure
+    # different halves of the same line — what she said, and why — and without
+    # a shared id they can only be lined up by timestamp.
+    req_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+
     def is_expired(self) -> bool:
         if self.ttl is None:
             return False
@@ -33,6 +40,7 @@ class Signal:
         context = dict(self.context)
         if self.lang:
             context["lang"] = self.lang
+        context["req_id"] = self.req_id
 
         return {
             "text": self.text,

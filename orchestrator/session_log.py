@@ -29,6 +29,8 @@ import threading
 import time
 from pathlib import Path
 
+from orchestrator import session_metrics
+
 
 # Context keys worth keeping on every record. These are the knobs: if a line
 # came out stale, the answer is almost always one of these repeating.
@@ -112,6 +114,7 @@ class SessionLog:
                     "priority": getattr(signal, "priority", None),
                     "mode": getattr(signal, "mode", ""),
                     "lang": getattr(signal, "lang", None),
+                    "req_id": getattr(signal, "req_id", ""),
                     "trigger_text": getattr(signal, "text", ""),
                 }
 
@@ -201,6 +204,88 @@ class SessionLog:
                 self._pending = None
         except Exception as e:
             print(f"[session] finished() failed: {e}")
+
+    # -----------------------------------------------------------------
+    # markers and the summary she prints herself
+    # -----------------------------------------------------------------
+
+    def mark(self, name: str, **fields) -> None:
+        """
+        A boundary in the file — `game_start`, `game_end`. What makes "this
+        game" a thing the summary can be scoped to, rather than everything
+        since the process started.
+        """
+        if not self.enabled:
+            return
+        try:
+            with self._lock:
+                self._write({"kind": "marker", "marker": name,
+                             "t": time.time(), "iso": _iso(), **fields})
+        except Exception as e:
+            print(f"[session] mark() failed: {e}")
+
+    def read_back(self, since_marker: str | None = None) -> list[dict]:
+        """
+        This session's own records, read from disk.
+
+        Reading the file rather than keeping a list in memory costs nothing at
+        these sizes and cannot drift from what was written — including the
+        line that is still being spoken, which is not in the file yet and
+        correctly does not count.
+        """
+        if not self.path:
+            return []
+        try:
+            records = []
+            for line in self.path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        except Exception as e:
+            print(f"[session] read_back() failed: {e}")
+            return []
+
+        if since_marker:
+            for i in range(len(records) - 1, -1, -1):
+                if records[i].get("marker") == since_marker:
+                    records = records[i + 1:]
+                    break
+
+        return [r for r in records if r.get("kind") == "line"]
+
+    def report(self, scope: str = "game",
+               since_marker: str | None = None) -> dict | None:
+        """
+        Print the short version and append a row to the history file.
+
+        This is the whole point of the game-end hook: the numbers arrive on
+        their own, in the console he is already looking at, instead of waiting
+        for someone to remember a command. Returns the summary, or None if
+        there was nothing to summarise.
+        """
+        if not self.enabled or not self.path:
+            return None
+        try:
+            records = self.read_back(since_marker)
+            if not records:
+                return None
+
+            summary = session_metrics.summarise(
+                records, scope=scope, log_name=self.path.name)
+
+            for line in session_metrics.console_lines(summary):
+                print(line)
+
+            history = self.path.parent / "history.csv"
+            session_metrics.append_history(summary, history)
+            return summary
+        except Exception as e:
+            print(f"[session] report() failed: {e}")
+            return None
 
     # -----------------------------------------------------------------
 

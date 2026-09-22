@@ -7,6 +7,7 @@ What she actually said, and how much of it she had already said.
     python tools/analyze_session.py --lines             # the full transcript
     python tools/analyze_session.py --json              # for diffing runs
     python tools/analyze_session.py new.jsonl --compare old.jsonl
+    python tools/analyze_session.py --history          # every session so far
 
 "She felt repetitive" is not something you can act on, and neither is a
 scrollback that shows the first fifty characters of every line. This turns a
@@ -40,67 +41,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import console_import                                    # noqa: E402
+from orchestrator import session_metrics                            # noqa: E402
+
+# The measurement lives in orchestrator/session_metrics.py so the running app
+# can print the same numbers at game end without importing a CLI. This module
+# is the reading-it-in-detail half: loading, the long report, comparison.
+from orchestrator.session_metrics import (                          # noqa: E402,F401
+    DEFAULT_SIMILARITY, HEAT_WORDS, STOPWORDS,
+    analyse, cluster, knob, normalise, phrases, said, similarity, words,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Loose on purpose — see the module docstring. Measured against a live
-# session: her four "limit testing" deaths score 0.73-1.00 against each other,
-# two answers that open identically and diverge halfway land at 0.52, and the
-# closest genuinely different pair in that session sits at 0.48. The line goes
-# between the last two.
-DEFAULT_SIMILARITY = 0.50
-
-# Content words at the head of a line. Opening the same way twice is what a
-# listener notices first, whatever the rest of the sentence does afterwards.
-OPENING_WORDS = 5
-OPENING_SCORE = 0.75
-
-# A shared run of this many words is a quoted phrase, not a coincidence.
-MIN_PHRASE_WORDS = 4
-MAX_PHRASE_WORDS = 9
-
-STOPWORDS = {
-    "the", "a", "an", "and", "or", "but", "if", "of", "to", "in", "on", "at",
-    "for", "with", "is", "are", "was", "were", "be", "been", "it", "its",
-    "that", "this", "these", "those", "as", "so", "not", "no", "just",
-}
-
-# Words that only appear when she is going at him or his team. Not a morality
-# check — a count. The ladder in orchestrator/tone.py hands her the teammate
-# vocabulary deliberately; this is how you find out how often it came back.
-HEAT_WORDS = {
-    "ape", "apes", "piggies", "piggy", "creature", "creatures", "hardstuck",
-    "hardstucks", "bronze", "clown", "clowns", "monkey", "monkeys",
-    "pathetic", "useless", "garbage", "trash", "braindead", "idiot", "idiots",
-    "embarrassing", "shameful", "disgrace", "worthless", "feeding", "feeder",
-    "griefing", "inting", "int", "throw", "throwing", "thrown",
-}
-
-# Second person aimed squarely at him. Counted separately from the heat words:
-# "the apes fed again" is her being rude about strangers, "you walked straight
-# into it again" is her being rude to the person listening, and those two wear
-# out at very different rates.
-AT_HIM = [
-    re.compile(p) for p in (
-        r'\byou keep\b', r'\byou walked\b', r'\byou died\b', r'\byou think\b',
-        r'\byou are (?:not|still|just)\b', r"\byou're (?:not|still|just)\b",
-        r'\byou thought\b', r'\byou forgot\b', r'\bdid you\b',
-        r'\byou (?:always|never)\b', r'\bstop (?:walking|running|dying|going)\b',
-        r'\byou have no\b', r'\byou owe\b',
-    )
-]
-
-# Standing grievances: lines she is allowed to hold as a position, which is
-# exactly why they turn into a catchphrase if nothing is watching them.
-GRIEVANCES = [
-    re.compile(p) for p in (
-        r'games are won', r'low deaths', r'limit test', r'stop walking',
-        r'walking straight into', r'grey screen', r'staying alive',
-    )
-]
-
-_WORD = re.compile(r"[^\w']+", re.UNICODE)
 
 
 # ===================================================================== loading
@@ -129,238 +82,6 @@ def newest_log() -> Path | None:
     return logs[-1] if logs else None
 
 
-def knob(rec: dict, name: str):
-    """
-    One of the things that produced this line.
-
-    A console-reconstructed record has no chosen tone — the ladder's decision
-    is never printed — but the verdict that fed it is, so that stands in.
-    Same for the pool key, which the game source prints and the JSONL records
-    directly.
-    """
-    if name == "tone":
-        return rec.get("tone") or rec.get("verdict_tone")
-    if name == "config_key":
-        return rec.get("config_key") or rec.get("event_type")
-    return rec.get(name)
-
-
-def said(rec: dict) -> str:
-    """What she said, preferring her full reply over the spoken chunks."""
-    return (rec.get("said") or rec.get("spoken_text") or "").strip()
-
-
-def normalise(text: str) -> str:
-    return _WORD.sub(" ", text.lower()).strip()
-
-
-def words(text: str) -> list[str]:
-    return [w for w in normalise(text).split() if w]
-
-
-# ================================================================== similarity
-
-def similarity(a: list[str], b: list[str]) -> float:
-    """
-    Order-aware overlap, floored by bag-of-content-words overlap.
-
-    SequenceMatcher alone misses the case that matters most here — the same
-    observation with the clauses swapped — and Jaccard alone calls any two
-    league reactions similar because they share "you", "the" and "them". Taking
-    the larger of the two catches the reorderings without the false positives,
-    since the stopwords are stripped before the set is built.
-    """
-    if not a or not b:
-        return 0.0
-
-    seq = SequenceMatcher(None, a, b).ratio()
-
-    content_a = [w for w in a if w not in STOPWORDS]
-    content_b = [w for w in b if w not in STOPWORDS]
-
-    ca, cb = set(content_a), set(content_b)
-    jaccard = len(ca & cb) / len(ca | cb) if ca and cb else 0.0
-
-    # Same opening, different tail still counts. Live example: "Briar finally
-    # got lucky enough to tag one of theirs, I guess" and the same nine words
-    # followed by a different second half score 0.52 on the measures above —
-    # under any sane threshold — and are heard as her saying it twice.
-    opening = 0.0
-    if (len(content_a) >= OPENING_WORDS and len(content_b) >= OPENING_WORDS
-            and content_a[:OPENING_WORDS] == content_b[:OPENING_WORDS]):
-        opening = OPENING_SCORE
-
-    return max(seq, jaccard, opening)
-
-
-def cluster(lines: list[dict], threshold: float) -> list[list[int]]:
-    """
-    Group lines that say the same thing. Greedy single-link: a line joins the
-    first cluster it matches, which is what "she already said this" means.
-    """
-    clusters: list[list[int]] = []
-    reps: list[list[list[str]]] = []
-
-    for i, rec in enumerate(lines):
-        toks = rec["_words"]
-        placed = False
-        for ci, members in enumerate(reps):
-            if any(similarity(toks, other) >= threshold for other in members):
-                clusters[ci].append(i)
-                members.append(toks)
-                placed = True
-                break
-        if not placed:
-            clusters.append([i])
-            reps.append([toks])
-
-    return clusters
-
-
-def phrases(lines: list[dict]) -> list[tuple[str, int, list[int]]]:
-    """
-    Word runs she used in more than one line, longest and most reused first.
-
-    Counted per line rather than per occurrence: saying "games are won by
-    staying alive" twice inside one answer is a rambling line, saying it in six
-    answers is a catchphrase, and only the second is what this is looking for.
-    """
-    seen: dict[tuple, set[int]] = defaultdict(set)
-
-    for i, rec in enumerate(lines):
-        toks = rec["_words"]
-        for n in range(MIN_PHRASE_WORDS, MAX_PHRASE_WORDS + 1):
-            for start in range(len(toks) - n + 1):
-                gram = tuple(toks[start:start + n])
-                if all(w in STOPWORDS for w in gram):
-                    continue
-                seen[gram].add(i)
-
-    kept = {g: ls for g, ls in seen.items() if len(ls) >= 2}
-
-    # Keep only maximal phrases: "walking straight into their range" and its
-    # own four-word prefix are one finding, not two.
-    out = []
-    for gram, ls in kept.items():
-        longer = any(len(other) > len(gram)
-                     and _contains(other, gram)
-                     and kept[other] >= ls
-                     for other in kept)
-        if not longer:
-            out.append((" ".join(gram), len(ls), sorted(ls)))
-
-    out.sort(key=lambda x: (-x[1], -len(x[0].split())))
-    return out
-
-
-def _contains(haystack: tuple, needle: tuple) -> bool:
-    n = len(needle)
-    return any(haystack[i:i + n] == needle for i in range(len(haystack) - n + 1))
-
-
-# ===================================================================== metrics
-
-def analyse(records: list[dict], threshold: float) -> dict:
-    lines = [r for r in records if said(r)]
-    for rec in lines:
-        rec["_words"] = words(said(rec))
-
-    spoken = [r for r in lines if r.get("outcome") in ("spoken", "unknown", None)]
-    heard = spoken or lines
-
-    clusters = cluster(heard, threshold)
-    repeated = [c for c in clusters if len(c) > 1]
-    echoes = sum(len(c) - 1 for c in repeated)
-
-    report: dict = {
-        "records": len(records),
-        "with_text": len(lines),
-        "outcomes": Counter(r.get("outcome", "unknown") for r in records),
-        "sources": Counter(r.get("source", "?") for r in records),
-        "truncated": any(r.get("truncated") for r in lines),
-        "repeat_rate": (echoes / len(heard)) if heard else 0.0,
-        "clusters": [],
-        "phrases": phrases(heard)[:40],
-        "openers": Counter(" ".join(r["_words"][:4]) for r in heard if r["_words"]),
-        "tones": Counter(knob(r, "tone") for r in heard if knob(r, "tone")),
-        "angles": Counter(r["angle_id"] for r in heard if r.get("angle_id")),
-        "keys": Counter(knob(r, "config_key") for r in heard
-                        if knob(r, "config_key")),
-        "heard": heard,
-    }
-
-    for members in sorted(repeated, key=lambda c: -len(c)):
-        recs = [heard[i] for i in members]
-        report["clusters"].append({
-            "size": len(members),
-            "texts": [said(r) for r in recs],
-            "when": [r.get("ts") or r.get("iso", "")[-8:] for r in recs],
-            "angles": [r.get("angle_id", "-") for r in recs],
-            "tones": [knob(r, "tone") or "-" for r in recs],
-            "keys": [knob(r, "config_key") or "-" for r in recs],
-        })
-
-    # --- attribution: a repeat belongs to whatever produced it -------------
-    by_knob: dict[str, Counter] = {"angle_id": Counter(), "tone": Counter(),
-                                   "config_key": Counter(), "source": Counter()}
-    knob_total: dict[str, Counter] = {k: Counter() for k in by_knob}
-
-    for members in clusters:
-        for pos, idx in enumerate(members):
-            rec = heard[idx]
-            for name in by_knob:
-                value = knob(rec, name)
-                if value is None:
-                    continue
-                knob_total[name][value] += 1
-                if pos > 0:                 # everything after the first is an echo
-                    by_knob[name][value] += 1
-
-    report["by_knob"] = by_knob
-    report["knob_total"] = knob_total
-
-    # --- heat --------------------------------------------------------------
-    heat_hits = Counter()
-    at_him = 0
-    grievance = Counter()
-    hot_lines = 0
-
-    for rec in heard:
-        text = said(rec).lower()
-        hits = [w for w in rec["_words"] if w in HEAT_WORDS]
-        heat_hits.update(hits)
-        aimed = any(p.search(text) for p in AT_HIM)
-        if aimed:
-            at_him += 1
-        for p in GRIEVANCES:
-            m = p.search(text)
-            if m:
-                grievance[m.group(0)] += 1
-        rec["_heat"] = len(hits) + (1 if aimed else 0)
-        if rec["_heat"]:
-            hot_lines += 1
-
-    report["heat_words"] = heat_hits
-    report["at_him"] = at_him
-    report["grievances"] = grievance
-    report["hot_lines"] = hot_lines
-    report["hot_share"] = (hot_lines / len(heard)) if heard else 0.0
-    report["hot_streak"] = _longest_streak(heard)
-
-    harsh = sum(n for tone, n in report["tones"].items()
-                if tone in ("sharp", "roast"))
-    report["harsh_tone_share"] = (harsh / sum(report["tones"].values())
-                                  if report["tones"] else 0.0)
-
-    return report
-
-
-def _longest_streak(lines: list[dict]) -> int:
-    best = run = 0
-    for rec in lines:
-        run = run + 1 if rec.get("_heat") else 0
-        best = max(best, run)
-    return best
 
 
 # ====================================================================== report
@@ -543,10 +264,16 @@ def main() -> int:
     ap.add_argument("--lines", action="store_true",
                     help="print the whole transcript and stop")
     ap.add_argument("--json", action="store_true", help="machine-readable")
+    ap.add_argument("--history", action="store_true",
+                    help="the running table of every game, from logs/history.csv")
     ap.add_argument("--compare", metavar="OLDER",
                     help="print this session's headline numbers against an "
                          "earlier one — did the change help?")
     args = ap.parse_args()
+
+    if args.history:
+        print_history(ROOT / "logs" / "history.csv")
+        return 0
 
     path = Path(args.path) if args.path else newest_log()
     if path is None:
@@ -584,6 +311,41 @@ def main() -> int:
 
     print_report(report, str(path), kind, args.top, args.similarity)
     return 0
+
+
+def print_history(path: Path) -> None:
+    """
+    The table he asked for: one row per game, oldest first.
+
+    A single session says what happened that night. A column of repeat
+    percentages down three weeks says whether a change held — and an outlier
+    row names the log file to open and hand over.
+    """
+    rows = session_metrics.read_history(path)
+    if not rows:
+        print(f"No history yet ({path}). It fills in one row per game.")
+        return
+
+    print()
+    print(f"  {'when':16} {'scope':8} {'lines':>5} {'repeat':>7} {'hot':>5} "
+          f"{'streak':>6} {'angles':>7}  {'most reused':38} log")
+    print("  " + "-" * 118)
+    for row in rows:
+        print(f"  {row.get('when',''):16} {row.get('scope',''):8} "
+              f"{row.get('lines',''):>5} {row.get('repeat_pct','')+'%':>7} "
+              f"{row.get('hot_pct','')+'%':>5} {row.get('streak',''):>6} "
+              f"{row.get('angles',''):>7}  "
+              f"{(row.get('top_repeat','') or '-')[:38]:38} {row.get('log','')}")
+    print()
+
+    games = [r for r in rows if r.get("scope") == "game"
+             and (r.get("repeat_pct") or "").isdigit()]
+    if len(games) >= 2:
+        first, last = int(games[0]["repeat_pct"]), int(games[-1]["repeat_pct"])
+        every = [int(r["repeat_pct"]) for r in games]
+        print(f"  {len(games)} games: repeat rate {first}% -> {last}%, "
+              f"average {sum(every) // len(every)}%")
+        print()
 
 
 def print_comparison(before: dict, before_name: str,

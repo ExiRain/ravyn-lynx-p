@@ -75,6 +75,7 @@ sources/
 
 orchestrator/
   session_log.py       every dispatched signal + her full reply, as JSONL
+  session_metrics.py   what counts as a repeat — shared by the app and the CLI
 
 tools/
   analyze_session.py   repetition, knob attribution and heat, per session
@@ -84,7 +85,8 @@ data/
   stunts.json          improv seeds for LLM to riff on
   quotes.json          literal lines sent straight to TTS
 
-logs/                  session-<date>-<time>.jsonl, gitignored
+logs/                  session-<date>-<time>.jsonl (gitignored)
+  history.csv          one row per game, tracked — safe to commit and share
 ```
 
 ## RabbitMQ Queues
@@ -215,12 +217,39 @@ different lines and scroll away regardless. Every run therefore writes
 the trigger, the angle, the tone, her full reply, what was actually synthesised
 and whether any of it was heard.
 
+**You do not have to run anything.** When a game ends she prints the short
+version herself, twenty seconds after the API goes away so her last line is
+counted rather than cut off:
+
+```
+[session] Game over: 22 lines, 5 echoes (23%), 64% hot, longest streak 7
+[session]   MyDeath: 5/9 angles used, 3 repeats
+[session]   most reused: "games are won by" x6
+```
+
+The same three lines print for the whole stream on shutdown, and every one of
+them appends a row to `logs/history.csv` — the table you read when you have
+not been counting:
+
+```
+  when             scope    lines  repeat   hot streak  angles  most reused
+  2026-09-21 20:58 game        22     23%   64%      7     5/9  games are won by
+  2026-09-25 21:40 game        19     11%   38%      3     7/9  you are going to lose this
+```
+
+A row that looks wrong names the log file to open. The full report is there
+when you want it:
+
 ```powershell
 python tools/analyze_session.py                     # newest session
+python tools/analyze_session.py --history           # the table above
 python tools/analyze_session.py --lines             # the full transcript
 python tools/analyze_session.py new.jsonl --compare old.jsonl
 python tools/analyze_session.py scrollback.txt      # a pasted terminal log
 ```
+
+It is standard library only — no RabbitMQ, no notebook, no GPU — and read
+only, so it is safe to run mid-stream between games.
 
 The report answers three questions:
 
@@ -233,6 +262,11 @@ The report answers three questions:
 A session that only exists as scrollback can still be read: pass the saved
 console output and it is reconstructed, with her lines cut at fifty characters
 and every record flagged `truncated`.
+
+`logs/` is gitignored **except `history.csv`**: the table is numbers and her
+own phrasing, with no voice transcripts and no viewer names, so it is safe in
+a public repo. The session files are not — they carry everything your
+microphone heard and every chat message, by name.
 
 Off with `SESSION_LOG_ENABLED = False`. `SESSION_LOG_FULL_CONTEXT = True` also
 keeps the SITUATION block and the angle instruction verbatim, for when one

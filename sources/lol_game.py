@@ -23,7 +23,7 @@ import requests
 import urllib3
 from pathlib import Path
 
-from orchestrator import game_theme, tone as tone_engine
+from orchestrator import game_theme, session_log, tone as tone_engine
 from orchestrator.champion_notes import ChampionNotes
 from orchestrator.identity import Identity
 from orchestrator.game_angles import AngleChooser
@@ -42,6 +42,12 @@ IDLE_INTERVAL = 10.0
 
 KILL_COALESCE_WINDOW = 5.0
 STALE_THRESHOLD = 10.0       # seconds in game time — older events dropped at detection
+
+# How long after the game disappears to wait before printing its summary.
+# Her last line is still in TTS and playback when the API goes away; a line
+# spoken after the summary is a line missing from it. Longer than her longest
+# utterance, short enough to land while the post-game screen is still up.
+SUMMARY_GRACE = 20.0
 
 TEAMFIGHT_WINDOW = 8.0
 TEAMFIGHT_MIN_KILLS = 3
@@ -211,6 +217,10 @@ class LolGameSource:
                 self._poll_game()
                 time.sleep(POLL_INTERVAL)
             else:
+                # The game-end summary fires here, not in the poll loop: once
+                # the game is gone the loop switches to detection and
+                # _poll_game is never called again.
+                self._maybe_summarise()
                 self._check_for_game()
                 time.sleep(IDLE_INTERVAL)
 
@@ -268,6 +278,11 @@ class LolGameSource:
         self._last_game_comment = 0.0
 
         self._apply_identity(data)
+
+        # Scopes the game-end summary to this game rather than to everything
+        # since the process started.
+        session_log.get().mark("game_start", champion=self._player_champion)
+        self._summary_due = 0.0
 
         print(f"[lol] Game detected! {self._player_summoner} "
               f"as {self._player_champion} ({self._player_team})")
@@ -505,12 +520,32 @@ class LolGameSource:
     # polling
     # ---------------------------------------------------------
 
+    def _maybe_summarise(self) -> None:
+        """
+        The three lines she prints about the game that just ended.
+
+        Runs on the poll thread once the grace period is up, so it cannot
+        delay anything and cannot be reached while she is still talking.
+        """
+        due = getattr(self, "_summary_due", 0.0)
+        if not due or time.time() < due:
+            return
+        self._summary_due = 0.0
+        log = session_log.get()
+        log.report(scope="game", since_marker="game_start")
+        log.mark("game_end")
+
     def _poll_game(self):
         data = self._fetch()
         if data is None:
             if self._game_active:
                 print("[lol] Game no longer active")
                 self._game_active = False
+                # Her reaction to the last death is usually still being
+                # spoken when the API goes away — the game ends mid-sentence.
+                # Summarising now would miss it, so the summary waits for her
+                # to finish and is emitted by a later poll.
+                self._summary_due = time.time() + SUMMARY_GRACE
             return
 
         self._current_game_time = data.get("gameData", {}).get("gameTime", 0)

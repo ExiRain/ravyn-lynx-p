@@ -174,7 +174,12 @@ def main():
         Thread(target=MockGameSource(queue, 20.0, 60.0).run, daemon=True).start()
 
     # --- Run dispatcher (blocks) ---
-    dispatcher.run()
+    try:
+        dispatcher.run()
+    finally:
+        # The whole stream, however it ended. A game summary covers one game;
+        # this is the one that includes chat, voice and the idle filler.
+        session_log.get().report(scope="session")
 
 
 if __name__ == "__main__":
