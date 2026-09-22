@@ -27,7 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.settings import get_settings                    # noqa: E402
 from orchestrator.priority_queue import SignalQueue      # noqa: E402
 from sources.voice_in import (                           # noqa: E402
-    HALLUCINATIONS, VoiceInput, addressed_to_her, looks_like_speech,
+    HALLUCINATIONS, VoiceInput, addressed_to_her, bare_name, confident,
+    echoes_prompt, looks_like_speech,
 )
 
 S = get_settings()
@@ -166,9 +167,10 @@ def test_signal_shape():
     ru = queue.pop()
     check("Russian speech is answered in Russian", ru.lang == "ru", ru.lang)
 
-    # The decoder is biased toward her name and champion names, so "Ravyn"
-    # does not come back as "Raven" and an English champion inside a Russian
-    # sentence survives instead of being transliterated.
+    # The decoder is biased toward champion names, so an English champion
+    # inside a Russian sentence survives instead of being transliterated —
+    # and pointedly NOT toward her name, which is the word that decides
+    # whether she answers at all. See test_prompt_echo.
     seen = {}
     class RecordingModel(FakeModel):
         def transcribe(self, samples, **kw):
@@ -179,9 +181,14 @@ def test_signal_shape():
     queue.pop()
     check("the language is auto-detected, not assumed",
           seen.get("language") is None, str(seen.get("language")))
-    check("and the decoder is primed with her name",
-          "Ravyn" in (seen.get("initial_prompt") or ""),
+    check("the decoder is primed with champion names",
+          "Riven" in (seen.get("initial_prompt") or ""),
           str(seen.get("initial_prompt"))[:60])
+    check("but never with her own name, in either language",
+          not any(name in prompt.lower()
+                  for prompt in S.VOICE_STT_PROMPTS.values()
+                  for name in S.VOICE_NAMES),
+          str(S.VOICE_STT_PROMPTS))
     check("priming prompts stay short enough not to be hallucinated back",
           all(len(p) < 200 for p in S.VOICE_STT_PROMPTS.values()))
     check("there is a prompt per language, so an all-Latin one cannot drag "
@@ -274,6 +281,112 @@ def test_cyrillic_overrides_whisper():
     check("a gank call never reaches the queue", queue.pop() is None)
 
 
+def test_prompt_echo():
+    """
+    From a live session: she kept telling him to stop saying her name, and he
+    had not said it.
+
+        [hear] 1.2s audio, 1.9s transcribe [en]: Ravyn.
+        [hear] 1.1s audio, 1.7s transcribe [en]: Ravyn. League of Legends.
+
+    Both are verbatim prefixes of the initial_prompt she was running with —
+    Whisper falling back on its hint with nothing in the audio to decode. The
+    name gate matched, and she was handed a message consisting of nothing but
+    her own name.
+    """
+    print("\n--- Whisper reading its own prompt back ---")
+
+    shaky = {"avg_logprob": -1.2, "no_speech_prob": 0.8}
+    sure = {"avg_logprob": -0.2, "no_speech_prob": 0.05}
+    en = S.VOICE_STT_PROMPTS["en"]
+    ru = S.VOICE_STT_PROMPTS["ru"]
+
+    check("the prompt read back word for word is an echo",
+          echoes_prompt("League of Legends: Riven, Garen, jungle", en))
+    check("a prefix of it is an echo",
+          echoes_prompt("League of Legends.", en))
+    check("so is one in Russian", echoes_prompt("Лига Легенд.", ru))
+    check("an echo with no confidence behind it is dropped",
+          echoes_prompt("League of Legends.", en) and not confident(shaky))
+    check("the same words said clearly are believed",
+          confident(sure))
+
+    check("a real sentence is never an echo",
+          not echoes_prompt("Ravyn, what do you think of this build?", en))
+    check("prompt words in his own order are not an echo",
+          not echoes_prompt("Garen is jungle and Riven is mid", en),
+          "out of prompt order")
+    check("a long utterance is not an echo whatever its words",
+          not echoes_prompt("League of Legends Riven Garen jungle mid "
+                            "support drake baron", en))
+    check("a word the prompt does not have breaks it",
+          not echoes_prompt("Riven ganked mid", en))
+    check("nothing is not an echo", not echoes_prompt("", en))
+
+    # And the case that started it: her name can no longer come back from the
+    # prompt, because it is not in the prompt.
+    check("her name is not in the prompt to be echoed",
+          not echoes_prompt("Ravyn.", en), "the name is out of the prompt")
+
+    # It can still arrive from a door closing, so the bare name has to earn
+    # it acoustically whatever produced it.
+    check("her name alone is recognised as such", bare_name("Ravyn."))
+    check("and its transliterations", bare_name("Равин") and bare_name("Raven"))
+    check("her name plus a word of his own is not",
+          not bare_name("Ravyn, look at this"))
+    check("a sentence about the enemy laner is not",
+          not bare_name("Riven is down"))
+    check("nothing is not", not bare_name(""))
+
+
+def test_an_echo_never_reaches_the_queue():
+    print("\n--- an echo does not become a signal ---")
+    queue = SignalQueue()
+    voice = VoiceInput(queue)
+    voice.available = True
+
+    class Segment:
+        def __init__(self, text, logprob, no_speech):
+            self.text = text
+            self.avg_logprob = logprob
+            self.no_speech_prob = no_speech
+
+    class Model:
+        """Whisper with a confidence to report, which the real one has."""
+        def __init__(self, text, logprob, no_speech):
+            self._seg = (text, logprob, no_speech)
+        def transcribe(self, samples, **kw):
+            return ([Segment(*self._seg)],
+                    types.SimpleNamespace(language="en"))
+
+    # Reciting its hint: the right words, nothing in the audio behind them.
+    voice._model = Model("League of Legends.", -1.4, 0.9)
+    voice._handle([0.0] * 16000)
+    check("an unconfident echo is dropped", queue.pop() is None)
+
+    # The same words, actually said, and naming her.
+    voice._model = Model("Ravyn, League of Legends.", -0.1, 0.02)
+    voice._handle([0.0] * 32000)
+    check("said clearly, it still reaches her", queue.pop() is not None)
+
+    # Her name alone, out of a door closing.
+    voice._model = Model("Ravyn.", -1.5, 0.85)
+    voice._handle([0.0] * 16000)
+    check("a bare name the audio does not support is dropped",
+          queue.pop() is None)
+
+    voice._model = Model("Ravyn?", -0.2, 0.05)
+    voice._handle([0.0] * 16000)
+    check("but calling her name clearly still reaches her",
+          queue.pop() is not None)
+
+    # Mumbled, but not prompt words — a real question, kept.
+    voice._model = Model("Ravyn, what do you make of this matchup?", -1.4, 0.9)
+    voice._handle([0.0] * 48000)
+    check("a real question is not dropped for being mumbled",
+          queue.pop() is not None)
+
+
 def test_degrades_to_silence():
     print("\n--- it fails quiet ---")
     voice = VoiceInput(SignalQueue())
@@ -328,6 +441,8 @@ def main():
     test_signal_shape()
     test_language_is_constrained_to_two()
     test_cyrillic_overrides_whisper()
+    test_prompt_echo()
+    test_an_echo_never_reaches_the_queue()
     test_degrades_to_silence()
     test_gate_capture_contract()
 

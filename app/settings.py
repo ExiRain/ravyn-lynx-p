@@ -108,9 +108,25 @@ class Settings:
     # Russian one anchors the script and spells her name the way it sounds.
     #
     # Short on purpose: a long prompt gets hallucinated back on quiet audio.
+    #
+    # HER NAME IS DELIBERATELY NOT IN HERE. It was, and it cost twice:
+    #
+    #   * Whisper echoes its initial prompt back on low-information audio. A
+    #     live session produced "Ravyn." from 1.2s and "Ravyn. League of
+    #     Legends." from 1.1s — both verbatim prefixes of the old prompt. The
+    #     name gate matched, and she was handed a message consisting only of
+    #     her own name, which she answered with "stop dropping my name".
+    #   * "Ravyn" and "Riven" are near-homophones, and the old prompt biased
+    #     the decoder toward HER. "Riven is down" — about the enemy laner —
+    #     came back as "Ravyn is down" and she answered as though addressed.
+    #
+    # The name is what decides whether she speaks at all, so it is the one
+    # word that must not be hinted to the decoder. Nothing is lost: she is
+    # matched through VOICE_NAMES, which already carries eleven spellings
+    # precisely because Whisper never writes it the way you do.
     VOICE_STT_PROMPTS = {
-        "en": "Ravyn. League of Legends: Riven, Garen, jungle, mid, support, drake, baron.",
-        "ru": "Равин. Лига Легенд: Ривен, Гарен, лес, мид, саппорт, дракон, барон.",
+        "en": "League of Legends: Riven, Garen, jungle, mid, support, drake, baron.",
+        "ru": "Лига Легенд: Ривен, Гарен, лес, мид, саппорт, дракон, барон.",
     }
     VOICE_MIN_CHARS = 4             # shorter than this is not a sentence
     VOICE_TTL = 45.0                # an answer this late answers nothing

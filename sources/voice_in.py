@@ -70,6 +70,79 @@ def _normalise(text: str) -> str:
 HALLUCINATIONS = {_normalise(h) for h in _HALLUCINATION_SOURCE}
 
 
+# How sure Whisper has to be before a transcript made only of prompt words is
+# believed. An echo is the decoder falling back on its hint with nothing in
+# the audio to go on, and it scores like it: low average log-probability, high
+# probability that the segment was silence. Real speech clears both easily.
+ECHO_MIN_LOGPROB = -0.7
+ECHO_MAX_NO_SPEECH = 0.5
+
+# Above this an utterance is too long to be a prompt echo whatever its words.
+ECHO_MAX_WORDS = 8
+
+
+def _words(text: str) -> list[str]:
+    import re
+    return [w for w in re.split(r"[^\w']+", (text or "").lower()) if w]
+
+
+def echoes_prompt(text: str, prompt: str) -> bool:
+    """
+    Did Whisper just read its own initial_prompt back?
+
+    On low-information audio it falls back on the hint it was given, and a
+    live session produced "Ravyn." and "Ravyn. League of Legends." out of
+    barely a second each — both verbatim prefixes of the prompt. Her name is
+    out of the prompt now, so this cannot fire on the name alone any more, but
+    the rest of the vocabulary is still in there and "Riven, Garen" coming
+    back from room tone is the same failure.
+
+    A transcript counts as an echo when it is short AND every word in it
+    appears in the prompt, in the prompt's own order. Both halves matter:
+    "jungle" on its own is a word he says constantly, and a real sentence
+    about Riven carries words the prompt does not have.
+    """
+    said = _words(text)
+    hint = _words(prompt)
+    if not said or not hint or len(said) > ECHO_MAX_WORDS:
+        return False
+
+    # Walk the prompt looking for the transcript's words in sequence. Out of
+    # order means he was talking, not the decoder reciting.
+    i = 0
+    for word in said:
+        while i < len(hint) and hint[i] != word:
+            i += 1
+        if i == len(hint):
+            return False
+        i += 1
+    return True
+
+
+def confident(confidence: dict) -> bool:
+    """Did the audio actually support what came back?"""
+    return (confidence.get("avg_logprob", 0.0) >= ECHO_MIN_LOGPROB
+            and confidence.get("no_speech_prob", 0.0) <= ECHO_MAX_NO_SPEECH)
+
+
+def bare_name(text: str) -> bool:
+    """
+    Her name and nothing else.
+
+    Whisper does not need the prompt's help to produce a lone proper noun out
+    of a door closing, and one word is the whole utterance — there is no
+    context to judge it by. So that one case has to earn it acoustically,
+    whatever put it there. "Ravyn, look at this" keeps a word of its own and
+    is not this.
+    """
+    said = _words(text)
+    if not said:
+        return False
+    return all(any(name in word or word in name
+                   for name in settings.VOICE_NAMES)
+               for word in said)
+
+
 def addressed_to_her(text: str) -> bool:
     """Did he say her name? Substring, so "Ravyn," and "Ravyn's" both count."""
     if not settings.VOICE_REQUIRE_NAME:
@@ -189,7 +262,20 @@ class VoiceInput:
             log_prob_threshold=-1.0,
             no_speech_threshold=0.6,
         )
-        return " ".join(seg.text for seg in segments).strip(), info
+        # Materialised because the stats are needed alongside the text —
+        # `segments` is a generator and can only be walked once.
+        segs = list(segments)
+        text = " ".join(seg.text for seg in segs).strip()
+
+        # Worst segment, not the average: one confident clause does not
+        # vouch for the mumbled one next to it.
+        confidence = {
+            "avg_logprob": min((getattr(s, "avg_logprob", 0.0) for s in segs),
+                               default=0.0),
+            "no_speech_prob": max((getattr(s, "no_speech_prob", 0.0)
+                                   for s in segs), default=0.0),
+        }
+        return text, info, confidence
 
     def _choose_language(self, info) -> str:
         """
@@ -215,7 +301,7 @@ class VoiceInput:
         seconds = len(samples) / 16000.0
 
         pinned = settings.VOICE_STT_LANGUAGE
-        text, info = self._transcribe(samples, pinned)
+        text, info, confidence = self._transcribe(samples, pinned)
         detected = pinned or (getattr(info, "language", "") or "")
 
         if not pinned:
@@ -226,7 +312,7 @@ class VoiceInput:
                 # only case that costs a second pass.
                 print(f"[hear]   heard as [{detected}], not a language he "
                       f"speaks — retrying as [{chosen}]")
-                text, info = self._transcribe(samples, chosen)
+                text, info, confidence = self._transcribe(samples, chosen)
             detected = chosen
 
         # Last word goes to the script itself. If the transcript is Cyrillic it
@@ -238,7 +324,28 @@ class VoiceInput:
         print(f"[hear] {seconds:.1f}s audio, {time.time() - t0:.1f}s transcribe "
               f"[{detected}]: {text[:70]}")
 
+        # Whisper reciting its own hint, not him talking. Checked before the
+        # name gate on purpose: an echo that happens to contain a name she
+        # answers to would otherwise walk straight past it, which is exactly
+        # how she ended up telling him to stop saying her name.
+        prompt = settings.VOICE_STT_PROMPTS.get(detected or "en", "")
+        if echoes_prompt(text, prompt) and not confident(confidence):
+            print(f"[hear]   ignored — Whisper echoed its own prompt "
+                  f"(logprob {confidence['avg_logprob']:.2f}, "
+                  f"no-speech {confidence['no_speech_prob']:.2f})")
+            return
+
         addressed = addressed_to_her(text)
+
+        # Her name on its own, out of audio that does not support it. This is
+        # the same failure arriving by a different route: she is handed a
+        # message that is only her name, and answers it as though he had
+        # stood there saying it.
+        if addressed and bare_name(text) and not confident(confidence):
+            print(f"[hear]   ignored — her name alone, and the audio does "
+                  f"not carry it (logprob {confidence['avg_logprob']:.2f}, "
+                  f"no-speech {confidence['no_speech_prob']:.2f})")
+            return
 
         if not looks_like_speech(text, addressed):
             print("[hear]   ignored — not speech")
