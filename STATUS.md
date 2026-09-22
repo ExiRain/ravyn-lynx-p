@@ -744,6 +744,15 @@ is the one thing under `logs/` that is **not** gitignored — numbers and her ow
 phrasing only, no voice transcripts and no viewer names, so it is safe in a
 public repo where a session file is not.
 
+**The notebook records the other half.** `ravyn-nb/app/worker_log.py` writes
+what the model was *asked* — the framed prompt with the SITUATION, ANGLE and
+TONE in it, the seed, the raw output before the filters, and what they
+removed. This side can prove she repeated herself and name the angle; only
+that side can say whether the angle reached the prompt at all. Every `Signal`
+now carries a `req_id`, stamped into the request context, so the two records
+join exactly instead of by timestamp. Neither repo needs the other to work —
+only the join does.
+
 The measurement moved to `orchestrator/session_metrics.py` when this landed.
 The app needs the same numbers as the CLI and must not import from `tools/`;
 two implementations of "what counts as a repeat" would disagree within a week.

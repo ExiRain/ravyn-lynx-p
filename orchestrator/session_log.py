@@ -114,6 +114,7 @@ class SessionLog:
                     "priority": getattr(signal, "priority", None),
                     "mode": getattr(signal, "mode", ""),
                     "lang": getattr(signal, "lang", None),
+                    "req_id": getattr(signal, "req_id", ""),
                     "trigger_text": getattr(signal, "text", ""),
                 }
 
