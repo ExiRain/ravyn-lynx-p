@@ -171,7 +171,8 @@ Two committed suites, both standalone (no pytest, no network):
   the ladder refusing consecutive roasts, and that a theme never becomes a
   prefix
 - `python tests/test_game_variety.py` also covers the cheer and boo
-- `python tests/test_voice_in.py` — 40 checks: the hallucination filter, that
+- `python tests/test_voice_in.py` — 76 checks: the hallucination filter, the
+  prompt-echo guard, that
   submit cannot block the audio thread, decoder priming, and that it fails quiet
 - `python tests/test_owner.py` — 30 checks: name matching across scripts, that
   his message is never dropped, and that he outranks the queue
@@ -1009,6 +1010,60 @@ simply not hearing him.
 
 **Untested against a real microphone.** The logic has coverage; the audio path
 does not.
+
+### "Stop saying my name" — when he had not
+
+From a live session: she kept telling him to stop dropping her name, and he
+had not said it. The scrollback has it plainly:
+
+```
+[hear] 1.2s audio, 1.9s transcribe [en]: Ravyn.
+[hear] 1.1s audio, 1.7s transcribe [en]: Ravyn. League of Legends.
+```
+
+Both are **verbatim prefixes of `VOICE_STT_PROMPTS["en"]`**, which began
+`"Ravyn. League of Legends: Riven, Garen, ..."`. Whisper echoes its
+`initial_prompt` back when the audio gives it nothing to decode, and a second
+of room tone gives it nothing. The name gate matched, the signal went out with
+`text="Ravyn."`, and she answered the only thing there was to answer: her own
+name, said at her, twice, for no reason. Her reply — *"stop dropping my name
+like it's a spell you need"* — was correct behaviour on a fabricated input.
+
+The same prompt caused a second failure in the same session. **"Ravyn" and
+"Riven" are near-homophones**, and the prompt named both, biasing the decoder
+toward her. `"Riven is down, the fear is bad so I can try and push top"` — a
+call about the enemy laner — came back as `"Ravyn is down..."`, passed the name
+gate, and she answered a lane call as though spoken to.
+
+Three changes, all in the hearing path:
+
+**Her name is out of the STT prompt, in both languages.** It is the one word
+that decides whether she speaks at all, so it is the one word that must not be
+hinted to the decoder. Nothing is lost: `VOICE_NAMES` already carries eleven
+spellings precisely because Whisper never writes it the way he does. Dropping
+it also stops biasing "Riven" toward "Ravyn" — the champion stays in the
+prompt, she does not.
+
+**`echoes_prompt()`** rejects a short transcript whose every word appears in
+the initial prompt, *in the prompt's own order*, unless the audio supports it.
+Both halves matter: "jungle" alone is a word he says constantly, and a real
+sentence about Riven carries words the prompt does not have. Order matters
+because "Garen is jungle and Riven is mid" is him talking, not the decoder
+reciting.
+
+**`bare_name()`** covers the same failure arriving by another route. Whisper
+does not need a prompt to produce a lone proper noun out of a door closing,
+and one word carries no context to judge it by — so her name with nothing else
+beside it has to earn it acoustically. "Ravyn, look at this" keeps a word of
+his own and is unaffected.
+
+"Supported by the audio" is `avg_logprob >= -0.7` and `no_speech_prob <= 0.5`,
+taken from the **worst** segment rather than the average — one confident clause
+does not vouch for the mumbled one next to it. Both numbers are now printed
+when a line is dropped, so a gate that is too tight shows itself in the log
+rather than as silence.
+
+`python tests/test_voice_in.py` — 76 checks.
 
 ### The cheer and the boo
 
