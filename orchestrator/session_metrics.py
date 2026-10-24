@@ -325,7 +325,8 @@ MIN_LINES_FOR_VERDICT = 6
 
 HISTORY_COLUMNS = [
     "when", "scope", "lines", "echoes", "repeat_pct", "hot_pct",
-    "streak", "harsh_pct", "top_repeat", "worst_key", "angles", "log",
+    "streak", "harsh_pct", "temper", "top_repeat", "worst_key", "angles",
+    "log",
 ]
 
 
@@ -362,9 +363,15 @@ def summarise(records: list[dict], threshold: float = DEFAULT_SIMILARITY,
         except Exception:
             pass
 
+    # The temper she spent most of the game in. Worth a column: "23% echoes"
+    # means something different on a supportive night than a negative one.
+    tempers = Counter(r["temper"] for r in heard if r.get("temper"))
+    temper = tempers.most_common(1)[0][0] if tempers else ""
+
     return {
         "when": time.strftime("%Y-%m-%d %H:%M"),
         "scope": scope,
+        "temper": temper,
         "lines": len(heard),
         "echoes": sum(c["size"] - 1 for c in report["clusters"]),
         "repeat_pct": round(report["repeat_rate"] * 100),
@@ -393,10 +400,12 @@ def console_lines(summary: dict) -> list[str]:
         return ["[session] Nothing said this game."]
 
     scope = "Game over" if summary["scope"] == "game" else "Session over"
+    temper = f", temper {summary['temper']}" if summary.get("temper") else ""
     out = [
         f"[session] {scope}: {summary['lines']} lines, "
         f"{summary['echoes']} echoes ({summary['repeat_pct']}%), "
         f"{summary['hot_pct']}% hot, longest streak {summary['streak']}"
+        f"{temper}"
     ]
 
     if summary["lines"] < MIN_LINES_FOR_VERDICT:
@@ -437,13 +446,25 @@ def append_history(summary: dict, path: Path) -> None:
     """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        # An existing file keeps ITS header. A column added here later would
+        # otherwise write values under the old file's headings, silently
+        # shifting every field one across — the kind of corruption you only
+        # notice weeks later when the trend stops making sense.
+        columns = HISTORY_COLUMNS
         new = not path.exists()
+        if not new:
+            with path.open(encoding="utf-8", newline="") as fh:
+                header = fh.readline().strip()
+            if header:
+                columns = header.split(",")
+
         with path.open("a", encoding="utf-8", newline="") as fh:
             writer = csv.DictWriter(
-                fh, fieldnames=HISTORY_COLUMNS, extrasaction="ignore")
+                fh, fieldnames=columns, extrasaction="ignore")
             if new:
                 writer.writeheader()
-            writer.writerow(summary)
+            writer.writerow({k: summary.get(k, "") for k in columns})
     except Exception as e:
         print(f"[session] history write failed: {e}")
 

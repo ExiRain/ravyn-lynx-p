@@ -75,6 +75,7 @@ sources/
 
 orchestrator/
   sanitize.py          viewer text made safe to say out loud — names, messages
+  temper.py            the slow axis — supportive / neutral / negative
   session_log.py       every dispatched signal + her full reply, as JSONL
   session_metrics.py   what counts as a repeat — shared by the app and the CLI
 

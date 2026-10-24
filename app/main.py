@@ -22,7 +22,7 @@ from pathlib import Path
 from threading import Thread
 
 from app.settings import get_settings
-from orchestrator import session_log
+from orchestrator import session_log, temper as temper_engine
 from orchestrator.identity import Identity
 from orchestrator.priority_queue import SignalQueue
 from orchestrator.dispatcher import Dispatcher
@@ -78,6 +78,12 @@ def main():
 
     queue = SignalQueue()
     dispatcher = Dispatcher(queue)
+
+    # Her temper for this run — NEUTRAL at startup, and the session clock
+    # starts here. It ages on its own, so a long stream softens or hardens
+    # whether or not a game is ever played.
+    temper = temper_engine.Temper()
+    temper.start_session()
 
     # Voice gate. The response listener drives its mute around actual
     # playback and asks it again, with her line already synthesised, before
@@ -150,7 +156,7 @@ def main():
     lol = None
     if not NO_LOL and not TEST_MODE:
         from sources.lol_game import LolGameSource
-        lol = LolGameSource(queue, DATA_DIR, identity=identity)
+        lol = LolGameSource(queue, DATA_DIR, identity=identity, temper=temper)
 
         def _sync_game(signal):
             if lol:

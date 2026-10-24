@@ -180,6 +180,9 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
+- `python tests/test_temper.py` — 50 checks: the three registers, what moves
+  them, that supportive cannot roast and negative cannot gush, and that the
+  pointed-line streak is bounded
 - `python tests/test_alerts.py` — 80 checks: the fold and the bypasses, the
   false positives a substring list would eat, placeholder rotation, the
   mechanical cleanup, and that she finishes a sentence before yielding the
@@ -811,6 +814,53 @@ about*, the tone says *how warm to be about it*, and multiplying them is where
 the variety lives — five tones across ~119 angles, rather than one fixed
 instruction per event type.
 
+### Temper — what kind of company she is tonight
+
+`tone.py` decides how hard she goes on **this death**. Temper is the slow axis,
+and it is the streamer's design: three registers, moving over hours.
+
+| | |
+|---|---|
+| SUPPORTIVE | *"YOU CAN DO THIS! I BELIEVE IN YOU"* |
+| NEUTRAL | what she has always been |
+| NEGATIVE | *"STOP FEEDING, you playing like my grandpa"* |
+
+**A register is not an intensity.** That is why this is not a fourth knob on
+the tone ladder: supportive is not "mildly sarcastic", it is on his side out
+loud, which is a different sentence entirely. So each register carries its own
+instruction, and the ladder is **clamped** underneath it — `CEILING` stops her
+roasting while supportive however the ninth death reads, and `FLOOR` stops her
+gushing while negative, because she is unimpressed with the evening, not lying
+about a triple kill.
+
+**Harder does not mean more often.** The measured session was **79% of her
+lines aimed at him, fifteen in a row** — what a losing night produces when
+every input pushes one way and nothing bounds the total. It is also the reason
+temper was asked for. So NEGATIVE *sharpens* and **speaks less**
+(`HEAT_FACTOR` multiplies the rulebook's reaction chance), and no temper gets
+more than `MAX_HARSH_STREAK` pointed lines running, after which the next one
+steps down the ladder.
+
+What moves it, from the streamer's own list: a win or a loss, that game's KDA
+(carrying a loss is not the same evening as being carried through a win), the
+**number of games** — progressive, because a flat rate per game was swamped
+four to one by the results it was supposed to weigh against — and the hours
+sat there, which is the only input a non-league stream has. Points are clamped
+to ±10: the register is three buckets, not a score, and without a ceiling a
+ten-win night sits so far into supportive that one bad game cannot move her.
+
+`start_session()` is SET TIME, `reset_games()` is RESET SESSION, and `nudge`
+is a hand on the dial when the numbers disagree with the room.
+
+**It reaches the prompt inside `tone_instruction`, not beside it.** The
+notebook reads that one key and nothing else, so the register rides along in it
+— no second repo to change, and no chance of the two blocks contradicting each
+other. The register is recorded per line in the session log, on the `game_end`
+marker, and as a column in `logs/history.csv`, so "23% echoes" can be read
+against the temper that produced it.
+
+`python tests/test_temper.py` — 50 checks.
+
 ### Theme — a disposition, never a sentence
 
 From the meta notes: a game where he is Riven mid into a CC-heavy comp should
@@ -1241,9 +1291,10 @@ champion tags are facts about the game. Different lifecycles.
 - `ravyn-nb` has no PR
 
 **Small**
-- Nothing bounds the *share* of a session spent at the top of the tone ladder —
-  the first measured session was 10/10 deaths at `sharp` or `roast`, 64% of her
-  lines aimed at him, 7 in a row. See §7 "Measuring it instead of remembering it"
+- ~~Nothing bounds the share of a session spent at the top of the tone
+  ladder~~ — **done**, §7 "Temper". `HEAT_FACTOR` and `MAX_HARSH_STREAK`
+  bound it; the measured 79%-hot, 15-in-a-row session is what set the numbers,
+  and the next one should be compared against it with `--compare`
 - `MyDeath` reached 5 of its 9 angles over 10 lines in that session — the pool
   is not the constraint, whatever is choosing from it is
 - Move the eleven older test suites out of the scratchpad into the repos
