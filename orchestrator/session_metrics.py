@@ -244,6 +244,12 @@ def analyse(records: list[dict], threshold: float) -> dict:
     for members in sorted(repeated, key=lambda c: -len(c)):
         recs = [heard[i] for i in members]
         report["clusters"].append({
+            # Indices into `heard`, not the texts: two lines that repeated
+            # each other verbatim are two records, and keying them by their
+            # own text collapses them into one — which is how a joined view
+            # came to report "one seed for two answers" about two different
+            # seeds.
+            "members": list(members),
             "size": len(members),
             "texts": [said(r) for r in recs],
             "when": [r.get("ts") or r.get("iso", "")[-8:] for r in recs],

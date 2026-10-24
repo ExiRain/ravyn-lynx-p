@@ -56,9 +56,9 @@ Eleven standalone test suites, no pytest and no network: `python tests/test_*.py
 - **A non-League mode.** `--no-lol` stops the game source, but her persona
   still carries its League section, so she pulls other subjects back to the
   game. Needs an `isLeague` flag that reaches the prompt.
-- **One view over both logs.** The PC records what she said and the notebook
-  records what the model was asked; they join on `req_id` and nothing reads
-  them together.
+- ~~One view over both logs~~ — **done**, `tools/join_logs.py`. Copy the
+  notebook's worker log over and it prints her line beside the prompt that
+  produced it, with a reading per repeat.
 - **Her Russian character.** She speaks Russian; the persona that makes her
   *her* is English throughout.
 
@@ -136,6 +136,7 @@ orchestrator/
 
 tools/
   analyze_session.py   repetition, knob attribution and heat, per session
+  join_logs.py         her line beside the prompt that produced it
   console_import.py    rebuilds a session from terminal scrollback
   test_hearing.py      mic level + what Whisper made of it, per utterance
 
@@ -310,6 +311,36 @@ python tools/analyze_session.py scrollback.txt      # a pasted terminal log
 
 It is standard library only — no RabbitMQ, no notebook, no GPU — and read
 only, so it is safe to run mid-stream between games.
+
+### Why a line came out that way
+
+`analyze_session.py` can tell you she repeated herself. It cannot tell you
+whether the angle it names actually reached the model. That needs the
+notebook's half, which joins on `req_id`:
+
+```powershell
+scp ravyn@notebook:~/ravyn-lynx/logs/worker-20260922-201500.jsonl .
+python tools/join_logs.py logs/session-20260922-201649.jsonl worker-20260922-201500.jsonl
+```
+
+```
+  [2x] MyKill
+      20:24:26  my_kill_outclassing_team   seed 1551   You're outpacing these little piggies...
+      20:27:19  my_kill_clean              seed 9921   You're outpacing these little piggies...
+      -> different angles, different seeds, same sentence — the model ignored the direction
+```
+
+Four readings, and they are mechanical rather than a judgement:
+
+| | |
+|---|---|
+| different angles, different seeds, same sentence | the model ignored the direction |
+| the angle never reached the prompt | plumbing, not the model |
+| one seed, two identical answers | the server ignored the seed |
+| her line differs from the raw output | a filter took the part that differed |
+
+`--seq N` prints one line in full: the framed prompt, the raw output, what the
+filters cut, and what she actually said.
 
 The report answers three questions:
 

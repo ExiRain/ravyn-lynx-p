@@ -180,6 +180,8 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
+- `python tests/test_join_logs.py` — 14 checks: the two files matching on
+  req_id, and each of the four readings against a fixture built to produce it
 - `python tests/test_temper.py` — 50 checks: the three registers, what moves
   them, that supportive cannot roast and negative cannot gush, and that the
   pointed-line streak is bounded
@@ -760,6 +762,22 @@ that side can say whether the angle reached the prompt at all. Every `Signal`
 now carries a `req_id`, stamped into the request context, so the two records
 join exactly instead of by timestamp. Neither repo needs the other to work —
 only the join does.
+
+**One view over both halves** — `tools/join_logs.py`. `analyze_session.py` can
+say she repeated herself and name the angle; it cannot say whether that angle
+reached the model. Joined on `req_id`, the two files give a reading per repeat
+that is mechanical rather than a judgement: different angles with different
+seeds producing one sentence means the model ignored the direction; an angle
+missing from the prompt means plumbing; one seed for two answers means the
+server ignored the seed; her line differing from the raw output means a filter
+took the part that differed.
+
+The first version of that tool looked cluster members up **by their own
+text**, so two lines that repeated each other verbatim collapsed into one
+record and it reported "one seed for two answers" about two different seeds.
+Confidently wrong is worse than silent, so clusters now carry their member
+indices and every reading has a fixture built to produce it
+(`tests/test_join_logs.py`).
 
 The measurement moved to `orchestrator/session_metrics.py` when this landed.
 The app needs the same numbers as the CLI and must not import from `tools/`;
