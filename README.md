@@ -80,6 +80,7 @@ orchestrator/
 tools/
   analyze_session.py   repetition, knob attribution and heat, per session
   console_import.py    rebuilds a session from terminal scrollback
+  test_hearing.py      mic level + what Whisper made of it, per utterance
 
 data/
   stunts.json          improv seeds for LLM to riff on

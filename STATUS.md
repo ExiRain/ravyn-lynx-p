@@ -1065,6 +1065,16 @@ rather than as silence.
 
 `python tests/test_voice_in.py` — 76 checks.
 
+**Is it the microphone or the decoder?** `python tools/test_hearing.py` runs
+the real gate and the real model and prints, per utterance: duration, peak,
+rms in dBFS, the transcript, `avg_logprob`, `no_speech_prob`, and the same
+decision `voice_in` would make — with the reason when it drops. The two
+failures look identical from the outside and are usually the same event: a
+thin clip gives the decoder nothing, so it falls back on its prompt. `rms`
+below ~0.02 is thin; below ~0.008 no threshold is worth tuning until the input
+gain is fixed. `--selftest` checks the arithmetic and the decision order with
+no microphone attached.
+
 ### The cheer and the boo
 
 A game ends and she reacts to it **before** she has anything thoughtful to say:
