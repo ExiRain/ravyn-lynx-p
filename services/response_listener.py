@@ -132,6 +132,7 @@ def start_response_listener(
     on_complete: Callable[[], None] | None = None,
     voice_gate=None,
     get_priority: Callable[[], int] | None = None,
+    yield_to: Callable[[], str] | None = None,
 ):
     """
     Blocking consumer — run in a daemon thread.
@@ -147,6 +148,10 @@ def start_response_listener(
     priority of the signal currently in flight — the response carries no
     priority of its own, and only one signal is ever in flight, so the
     dispatcher can just be asked.
+
+    yield_to names the source of a queued signal that outranks what she is
+    saying, or "" for nothing — asked between sentences, so a donation waits
+    out the sentence she is on rather than the whole three-sentence answer.
     """
 
     credentials = pika.PlainCredentials(settings.RABBIT_USER, settings.RABBIT_PASS)
@@ -311,6 +316,7 @@ def start_response_listener(
         try:
             _play(opening, sentences, mood, tired, lang, had_clients)
         finally:
+            # No-op when _play already closed the record as preempted.
             session_log.get().finished("spoken")
             if voice_gate is not None:
                 voice_gate.set_muted(False)
@@ -324,9 +330,21 @@ def start_response_listener(
         total_duration = 0.0
 
         sentence, wav_bytes, gen_s = opening
+        yielded_to = ""
 
         for idx in range(1, total + 1):
             if idx > 1:
+                # Between sentences is the only place this is asked. She is
+                # committed to the sentence she has started — cutting her off
+                # mid-word to read a donation sounds worse than the two
+                # seconds it costs to let her land it — but she does not have
+                # to finish the whole answer first.
+                yielded_to = yield_to() if yield_to else ""
+                if yielded_to:
+                    print(f"[response] Yielding after {idx - 1}/{total} "
+                          f"sentences — {yielded_to} is waiting")
+                    break
+
                 sentence = rest[idx - 2]
                 wav_bytes, gen_s = _synth(sentence, mood, tired, lang)
                 if not wav_bytes:
@@ -354,6 +372,10 @@ def start_response_listener(
                   f"gen {gen_s:.2f}s, audio {duration:.2f}s: {sentence[:50]}")
 
         _run_async(audio_server.end_utterance(), timeout=5)
+
+        if yielded_to:
+            session_log.get().finished(
+                "preempted", note=f"yielded to {yielded_to}")
 
         # Hold busy until Godot has actually finished playing. Measured from
         # when the first audio went out, not from now — Godot has been playing

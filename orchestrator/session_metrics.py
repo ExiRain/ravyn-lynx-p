@@ -214,7 +214,10 @@ def analyse(records: list[dict], threshold: float) -> dict:
     for rec in lines:
         rec["_words"] = words(said(rec))
 
-    spoken = [r for r in lines if r.get("outcome") in ("spoken", "unknown", None)]
+    # "preempted" counts as heard: she said part of it out loud, and the part
+    # she said is what a listener judges her by.
+    spoken = [r for r in lines
+              if r.get("outcome") in ("spoken", "preempted", "unknown", None)]
     heard = spoken or lines
 
     clusters = cluster(heard, threshold)

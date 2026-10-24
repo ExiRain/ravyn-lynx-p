@@ -74,6 +74,7 @@ sources/
   silence_filler.py    timer-based — improv seeds (LLM) or quotes (TTS direct)
 
 orchestrator/
+  sanitize.py          viewer text made safe to say out loud — names, messages
   session_log.py       every dispatched signal + her full reply, as JSONL
   session_metrics.py   what counts as a repeat — shared by the app and the CLI
 
@@ -85,6 +86,8 @@ tools/
 data/
   stunts.json          improv seeds for LLM to riff on
   quotes.json          literal lines sent straight to TTS
+  blocklist.json       names and words she will never say
+  alert_lines.json     what she says instead when one of them cannot be read
 
 logs/                  session-<date>-<time>.jsonl (gitignored)
   history.csv          one row per game, tracked — safe to commit and share

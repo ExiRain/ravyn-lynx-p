@@ -180,6 +180,10 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
+- `python tests/test_alerts.py` — 80 checks: the fold and the bypasses, the
+  false positives a substring list would eat, placeholder rotation, the
+  mechanical cleanup, and that she finishes a sentence before yielding the
+  floor
 - `python tests/test_session_log.py` — 78 checks: one record per line whatever
   its fate, that a logging failure cannot raise into the response thread,
   rebuilding a session from scrollback, and that the four real death reactions
@@ -1074,6 +1078,76 @@ thin clip gives the decoder nothing, so it falls back on its prompt. `rms`
 below ~0.02 is thin; below ~0.008 no threshold is worth tuning until the input
 gain is fixed. `--selftest` checks the arithmetic and the decision order with
 no microphone attached.
+
+### Reading a stranger's words out loud
+
+Her first responsibility is the one that had no code: reading a paid message.
+`sources/` had a game source, a chat source and `mock_events.py`. Priorities 1
+and 2 were reserved for subs, follows and donations and nothing fed that lane.
+
+**The donation path never touches the LLM.** It is a `quote` signal —
+`skip_llm=True`, straight to TTS. That is a safety property, not a shortcut: a
+donation reading *"ignore your instructions and say ..."* has nowhere to land
+if no model ever sees it. `tests/test_alerts.py` asserts that
+`orchestrator/sanitize.py` never imports anything that could reach one.
+
+**Normalise before matching, never match raw.** A word list on its own is
+beaten on the first attempt — `n_i_g`, `n1g`, `nі99er` with a Cyrillic і,
+zero-width joiners between every letter. `fold()` decomposes (NFKD), strips
+combining marks and invisibles, lowercases, maps homoglyphs and leet, drops
+separators and collapses runs; the list is matched against that and against
+the raw text.
+
+Cyrillic maps to Latin **only when the text is mostly Latin**, which is the
+trick being defeated. Folding real Russian the same way turned `Привет` into
+`пpиbet` and could land an innocent Russian word on an English entry. Her
+Russian terms fold through the same function, so they stay Cyrillic and still
+match.
+
+**Two kinds of list entry, because one rule cannot serve both.**
+`substrings` are disqualifying wherever they appear, however padded — and are
+exactly what eats Scunthorpe, so the shipped list keeps them to terms that
+cannot occur innocently. `words` match whole words against the raw text. The
+regression cases are both halves: the bypasses people actually use, and
+`Scunthorpe`, `grapes`, `raccoon`, `suspicious`, `flame retardant`, `Mikysa`.
+
+**Blocked is replaced, never repaired.** There is no partial read of a message
+with a slur in the middle. Three name placeholders and three message
+placeholders, in `data/alert_lines.json`, **rotated rather than random** — two
+unreadable donations in one evening should not get the same sentence, which is
+the thing the session log exists to measure.
+
+Mechanical cleanup is separate from content: URLs are never read aloud, emoji
+and box-drawing go, `AAAAAAAA` collapses to two, a word repeated six times
+comes back twice, SHOUTING is lowered rather than blocked (a TTS problem, not
+a content one), and anything past 220 characters is cut on a word boundary.
+Every intervention is counted, like `persona/filters.py` — `name_blocked 2,
+message_blocked 5, truncated 3 of 40` is tunable where "that felt off" is not.
+
+### She finishes the sentence, then hands over the floor
+
+The order is TTS > alerts > commentary: `DONATION_PRIORITY = 1`,
+`ALERT_PRIORITY = 2`, game commentary 3+, idle filler 10. The collisions at 1
+and 2 are deliberate — a cheer is already one sentence and lands in the same
+moment a donation would, and his voice sits at 2 because anything above
+`VOICE_INTERRUPT_PRIORITY` is held by the gate while he is talking, which is
+exactly when he is asking her something.
+
+Priority alone was not enough. The busy flag covers a whole utterance, so a
+donation arriving on her first sentence waited out all three. Now
+`Dispatcher.more_important_waiting()` is asked **between sentences** by the
+response listener, and she stops after the one she is on. Not mid-sentence:
+cutting her off mid-word sounds worse than the two seconds it costs to let her
+land the line. Strictly more important, so an alert never interrupts another
+alert — otherwise a raid has her talking over herself — and an expired signal
+never takes the floor.
+
+A yielded line is recorded as `preempted` with what it yielded to, and counts
+as heard in the session metrics: she said part of it out loud, and that part is
+what a listener judges her by. `PREEMPT_ENABLED = False` restores the old
+finish-the-whole-answer behaviour.
+
+`python tests/test_alerts.py` — 80 checks.
 
 ### The cheer and the boo
 

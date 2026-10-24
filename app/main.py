@@ -135,6 +135,7 @@ def main():
             "on_complete": lambda: dispatcher.set_busy(False),
             "voice_gate": dispatcher.voice_gate,
             "get_priority": dispatcher.inflight_priority,
+            "yield_to": dispatcher.more_important_waiting,
         },
         daemon=True,
         name="response-listener",

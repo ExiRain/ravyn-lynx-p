@@ -1,0 +1,15 @@
+{
+  "_comment": "What she says when a name or a message cannot be read. Three of each, rotated in order rather than picked at random, so two unreadable donations in a row do not get the same line. Edit freely — this file is read at startup and nothing in the code depends on the wording.",
+
+  "name_placeholders": [
+    "One who shall not be named",
+    "Someone whose name I will not repeat",
+    "A viewer who picked their name badly"
+  ],
+
+  "message_placeholders": [
+    "their message was corrupted, so it stays unsaid",
+    "their message is not something I am going to read",
+    "the rest of that did not survive the trip here"
+  ]
+}

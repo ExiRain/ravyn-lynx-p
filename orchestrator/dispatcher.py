@@ -65,6 +65,33 @@ class Dispatcher:
         with self._busy_lock:
             return self._inflight.priority if self._inflight else 5
 
+    def more_important_waiting(self) -> str:
+        """
+        The source of a queued signal that outranks the one she is speaking,
+        or "" if nothing does.
+
+        Asked between her sentences by the response listener. The dispatcher
+        is the only thing that holds both the queue and the signal in flight,
+        so the comparison belongs here rather than being plumbed through two
+        callbacks.
+
+        Strictly more important: an alert does not interrupt another alert,
+        or she would spend a raid talking over herself.
+        """
+        if not self.settings.PREEMPT_ENABLED:
+            return ""
+
+        head = self.queue.peek()
+        if head is None:
+            return ""
+
+        with self._busy_lock:
+            current = self._inflight.priority if self._inflight else 5
+
+        if head.priority < current and not head.is_expired():
+            return head.source
+        return ""
+
     def is_busy(self) -> bool:
         """
         Busy with a watchdog. If the notebook dies mid-request, or a response

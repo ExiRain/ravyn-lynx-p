@@ -1,0 +1,22 @@
+{
+  "_comment": "Names and words she will never say out loud. Matched against the FOLDED form (orchestrator/sanitize.py): NFKD, accents stripped, homoglyphs and leet mapped, separators dropped, runs collapsed. One entry therefore covers n_i_g, n1g, nі99er and the Cyrillic lookalikes without listing them.",
+
+  "_substrings": "Disqualifying wherever they appear, however padded. ONLY put terms here that cannot occur inside an innocent word — the fold has no separators left, so 'rape' here would also block 'grapes' and 'cunt' would block 'Scunthorpe'. When unsure, use words.",
+  "substrings": [
+    "nigger", "nigga", "niglet", "faggot", "tranny", "kike", "wetback",
+    "whitepower", "heilhitler", "childporn", "killyourself"
+  ],
+
+  "_words": "Matched as whole words against the raw text, so a name that merely contains one survives. Everything with an innocent superstring belongs here.",
+  "words": [
+    "retard", "retarded", "coon", "spic", "chink", "gook", "paki", "kys",
+    "rape", "rapist", "pedo", "pedophile", "nazi", "hitler", "kkk",
+    "fuck", "fucking", "shit", "bitch", "whore", "slut", "dick", "cock",
+    "pussy", "asshole", "bastard", "cunt", "twat", "wanker",
+    "хуй", "хуя", "пизда", "пиздец", "блядь", "блять", "сука", "суки",
+    "ебать", "ебал", "пидор", "пидорас", "нигер", "ниггер", "жид",
+    "хач", "даун", "убейся", "сдохни"
+  ],
+
+  "_note": "A seed list, not a finished one. Add what your chat actually produces. Every intervention is counted — watch the [sanitize] tally: a term slipping through shows up as a message read that should not have been, and a false positive shows up as a name you know is fine getting a placeholder."
+}
