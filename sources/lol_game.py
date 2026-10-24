@@ -23,7 +23,8 @@ import requests
 import urllib3
 from pathlib import Path
 
-from orchestrator import game_theme, session_log, tone as tone_engine
+from orchestrator import (game_theme, session_log, temper as temper_engine,
+                          tone as tone_engine)
 from orchestrator.champion_notes import ChampionNotes
 from orchestrator.identity import Identity
 from orchestrator.game_angles import AngleChooser
@@ -82,7 +83,8 @@ EVENT_CONFIG = {
 
 class LolGameSource:
 
-    def __init__(self, queue: SignalQueue, data_dir: Path, identity=None):
+    def __init__(self, queue: SignalQueue, data_dir: Path, identity=None,
+                 temper=None):
         self.queue = queue
         self._running = True
         self._last_event_index = 0
@@ -146,6 +148,10 @@ class LolGameSource:
         # How hard she goes, the shape of this particular game, and which
         # language she narrates it in.
         self.tones = tone_engine.ToneLadder()
+        # The slow axis — what kind of company she is tonight, as against how
+        # hard she goes on this one death. Shared with the rest of the app, so
+        # a stream with no game still ages. See orchestrator/temper.py.
+        self.temper = temper or temper_engine.Temper()
         self.theme = game_theme.NO_THEME
         self.lang = settings.LANG_AMBIENT
 
@@ -533,7 +539,7 @@ class LolGameSource:
         self._summary_due = 0.0
         log = session_log.get()
         log.report(scope="game", since_marker="game_start")
-        log.mark("game_end")
+        log.mark("game_end", **self.temper.state())
 
     def _poll_game(self):
         data = self._fetch()
@@ -604,6 +610,17 @@ class LolGameSource:
             # the game follows it as an ordinary GameEnd, and the dispatcher's
             # busy flag guarantees that order without any coordination here.
             self._push_cheer(won)
+
+            # Before the signal goes out, so her line about the game is
+            # framed by the temper this game just produced.
+            self.temper.record_game(temper_engine.GameResult(
+                won=won,
+                kills=self.state.kills,
+                deaths=self.state.deaths,
+                assists=self.state.assists,
+                minutes=self.state.minutes,
+                champion=self.state.champion or self._player_champion or "",
+            ))
 
             seed = self._pick_quote("game_state",
                                     "game_win" if won else "game_loss")
@@ -1091,6 +1108,12 @@ class LolGameSource:
             chance = verdict.react_chance
         else:
             chance = self._reaction_chance(config_key, event_type)
+
+        # Harder temper, FEWER lines. A pointed remark every so often lands;
+        # one every forty seconds is the 79%-hot session the streamer asked
+        # temper to fix. See orchestrator/temper.py.
+        chance *= self.temper.heat_factor()
+
         if chance < 1.0 and random.random() > chance:
             print(f"[lol] {config_key}: skipped (chance {chance:.2f})")
             return
@@ -1165,8 +1188,22 @@ class LolGameSource:
         if verdict is not None:
             wanted = _shift_tone(verdict.tone, self.theme.tone_shift)
             chosen = self.tones.resolve(wanted)
+
+            # Temper has the last word on the tone: she cannot roast him while
+            # she is supportive, however the ninth death reads, and she cannot
+            # be fourth-in-a-row pointed whatever her temper.
+            chosen = self.temper.clamp(chosen)
+            if not self.temper.allow_harsh(chosen):
+                chosen = self.temper.soften(chosen)
+
             ctx["tone"] = chosen
-            ctx["tone_instruction"] = tone_engine.instruction(chosen, verdict)
+            ctx["temper"] = self.temper.register()
+            # One block, not two: the notebook reads `tone_instruction` and
+            # nothing else, so the register rides along inside it rather than
+            # needing a change on that side.
+            ctx["tone_instruction"] = (
+                tone_engine.instruction(chosen, verdict)
+                + "\n\n" + self.temper.instruction())
 
         # Her face should reflect how the game is going, not sit flat until a
         # fifth death. The worker only applies mood_spike when the LLM did not

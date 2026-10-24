@@ -35,7 +35,7 @@ from orchestrator import session_metrics
 # Context keys worth keeping on every record. These are the knobs: if a line
 # came out stale, the answer is almost always one of these repeating.
 CONTEXT_KEYS = (
-    "event_type", "config_key", "angle_id", "tone", "theme_id",
+    "event_type", "config_key", "angle_id", "tone", "temper", "theme_id",
     "teammate_rank", "user", "is_owner", "trigger", "death_count",
 )
 

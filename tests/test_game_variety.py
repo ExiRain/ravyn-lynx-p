@@ -39,6 +39,7 @@ from app.settings import get_settings                       # noqa: E402
 from orchestrator.game_angles import (                        # noqa: E402
     ANGLES, MIN_UNCONDITIONAL, AngleChooser, _always,
 )
+from orchestrator import temper                              # noqa: E402
 from orchestrator.game_state import GameState                # noqa: E402
 from orchestrator.priority_queue import SignalQueue           # noqa: E402
 from orchestrator import game_theme, tone                     # noqa: E402
@@ -338,6 +339,10 @@ def test_global_gap():
     source.lang = S.LANG_AMBIENT
     source.theme = game_theme.NO_THEME
     source.tones = tone.ToneLadder()
+    # The slow axis. A bare instance has to be handed it the same way
+    # __init__ would — _push_event asks it how much she is talking and how
+    # hard she is allowed to be. See orchestrator/temper.py.
+    source.temper = temper.Temper()
     pushed = []
     source.queue = types.SimpleNamespace(push=pushed.append)
 

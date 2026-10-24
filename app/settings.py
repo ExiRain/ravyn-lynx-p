@@ -222,6 +222,30 @@ class Settings:
     CHEER_PRIORITY = 1
     CHEER_TTL = 25.0
 
+    # --- Who gets the floor ---
+    # TTS > ALERTS > COMMENTARY, lower number first:
+    #
+    #   1  a paid message read out loud (donation TTS), and the game-end cheer
+    #   2  alerts — sub, follow, raid, bits — and his own voice
+    #   3+ game commentary
+    #   10 idle filler
+    #
+    # The collisions at 1 and 2 are deliberate. A cheer is already one
+    # sentence and lands in the same moment a donation would; his voice sits
+    # at 2 because anything above VOICE_INTERRUPT_PRIORITY gets held by the
+    # gate while he is talking, which is exactly when he is asking her
+    # something. Ties break on arrival order (Signal.__lt__).
+    DONATION_PRIORITY = 1
+    ALERT_PRIORITY = 2
+
+    # She finishes the sentence she is on, then hands the floor over if
+    # something more important arrived while she was talking. Checked between
+    # sentences only: cutting her off mid-word to read a donation sounds worse
+    # than the two seconds it costs to let her land the line.
+    #
+    # Strictly more important — an alert does not interrupt another alert.
+    PREEMPT_ENABLED = True
+
     # --- Language ---
     # Ambient: her own idle voice — silence filler, game reactions, promos.
     # Nobody addressed her, so there is nothing to mirror. Keep this fixed;

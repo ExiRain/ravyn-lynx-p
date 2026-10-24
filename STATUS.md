@@ -180,6 +180,13 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
+- `python tests/test_temper.py` — 50 checks: the three registers, what moves
+  them, that supportive cannot roast and negative cannot gush, and that the
+  pointed-line streak is bounded
+- `python tests/test_alerts.py` — 80 checks: the fold and the bypasses, the
+  false positives a substring list would eat, placeholder rotation, the
+  mechanical cleanup, and that she finishes a sentence before yielding the
+  floor
 - `python tests/test_session_log.py` — 78 checks: one record per line whatever
   its fate, that a logging failure cannot raise into the response thread,
   rebuilding a session from scrollback, and that the four real death reactions
@@ -807,6 +814,53 @@ about*, the tone says *how warm to be about it*, and multiplying them is where
 the variety lives — five tones across ~119 angles, rather than one fixed
 instruction per event type.
 
+### Temper — what kind of company she is tonight
+
+`tone.py` decides how hard she goes on **this death**. Temper is the slow axis,
+and it is the streamer's design: three registers, moving over hours.
+
+| | |
+|---|---|
+| SUPPORTIVE | *"YOU CAN DO THIS! I BELIEVE IN YOU"* |
+| NEUTRAL | what she has always been |
+| NEGATIVE | *"STOP FEEDING, you playing like my grandpa"* |
+
+**A register is not an intensity.** That is why this is not a fourth knob on
+the tone ladder: supportive is not "mildly sarcastic", it is on his side out
+loud, which is a different sentence entirely. So each register carries its own
+instruction, and the ladder is **clamped** underneath it — `CEILING` stops her
+roasting while supportive however the ninth death reads, and `FLOOR` stops her
+gushing while negative, because she is unimpressed with the evening, not lying
+about a triple kill.
+
+**Harder does not mean more often.** The measured session was **79% of her
+lines aimed at him, fifteen in a row** — what a losing night produces when
+every input pushes one way and nothing bounds the total. It is also the reason
+temper was asked for. So NEGATIVE *sharpens* and **speaks less**
+(`HEAT_FACTOR` multiplies the rulebook's reaction chance), and no temper gets
+more than `MAX_HARSH_STREAK` pointed lines running, after which the next one
+steps down the ladder.
+
+What moves it, from the streamer's own list: a win or a loss, that game's KDA
+(carrying a loss is not the same evening as being carried through a win), the
+**number of games** — progressive, because a flat rate per game was swamped
+four to one by the results it was supposed to weigh against — and the hours
+sat there, which is the only input a non-league stream has. Points are clamped
+to ±10: the register is three buckets, not a score, and without a ceiling a
+ten-win night sits so far into supportive that one bad game cannot move her.
+
+`start_session()` is SET TIME, `reset_games()` is RESET SESSION, and `nudge`
+is a hand on the dial when the numbers disagree with the room.
+
+**It reaches the prompt inside `tone_instruction`, not beside it.** The
+notebook reads that one key and nothing else, so the register rides along in it
+— no second repo to change, and no chance of the two blocks contradicting each
+other. The register is recorded per line in the session log, on the `game_end`
+marker, and as a column in `logs/history.csv`, so "23% echoes" can be read
+against the temper that produced it.
+
+`python tests/test_temper.py` — 50 checks.
+
 ### Theme — a disposition, never a sentence
 
 From the meta notes: a game where he is Riven mid into a CC-heavy comp should
@@ -1065,6 +1119,86 @@ rather than as silence.
 
 `python tests/test_voice_in.py` — 76 checks.
 
+**Is it the microphone or the decoder?** `python tools/test_hearing.py` runs
+the real gate and the real model and prints, per utterance: duration, peak,
+rms in dBFS, the transcript, `avg_logprob`, `no_speech_prob`, and the same
+decision `voice_in` would make — with the reason when it drops. The two
+failures look identical from the outside and are usually the same event: a
+thin clip gives the decoder nothing, so it falls back on its prompt. `rms`
+below ~0.02 is thin; below ~0.008 no threshold is worth tuning until the input
+gain is fixed. `--selftest` checks the arithmetic and the decision order with
+no microphone attached.
+
+### Reading a stranger's words out loud
+
+Her first responsibility is the one that had no code: reading a paid message.
+`sources/` had a game source, a chat source and `mock_events.py`. Priorities 1
+and 2 were reserved for subs, follows and donations and nothing fed that lane.
+
+**The donation path never touches the LLM.** It is a `quote` signal —
+`skip_llm=True`, straight to TTS. That is a safety property, not a shortcut: a
+donation reading *"ignore your instructions and say ..."* has nowhere to land
+if no model ever sees it. `tests/test_alerts.py` asserts that
+`orchestrator/sanitize.py` never imports anything that could reach one.
+
+**Normalise before matching, never match raw.** A word list on its own is
+beaten on the first attempt — `n_i_g`, `n1g`, `nі99er` with a Cyrillic і,
+zero-width joiners between every letter. `fold()` decomposes (NFKD), strips
+combining marks and invisibles, lowercases, maps homoglyphs and leet, drops
+separators and collapses runs; the list is matched against that and against
+the raw text.
+
+Cyrillic maps to Latin **only when the text is mostly Latin**, which is the
+trick being defeated. Folding real Russian the same way turned `Привет` into
+`пpиbet` and could land an innocent Russian word on an English entry. Her
+Russian terms fold through the same function, so they stay Cyrillic and still
+match.
+
+**Two kinds of list entry, because one rule cannot serve both.**
+`substrings` are disqualifying wherever they appear, however padded — and are
+exactly what eats Scunthorpe, so the shipped list keeps them to terms that
+cannot occur innocently. `words` match whole words against the raw text. The
+regression cases are both halves: the bypasses people actually use, and
+`Scunthorpe`, `grapes`, `raccoon`, `suspicious`, `flame retardant`, `Mikysa`.
+
+**Blocked is replaced, never repaired.** There is no partial read of a message
+with a slur in the middle. Three name placeholders and three message
+placeholders, in `data/alert_lines.json`, **rotated rather than random** — two
+unreadable donations in one evening should not get the same sentence, which is
+the thing the session log exists to measure.
+
+Mechanical cleanup is separate from content: URLs are never read aloud, emoji
+and box-drawing go, `AAAAAAAA` collapses to two, a word repeated six times
+comes back twice, SHOUTING is lowered rather than blocked (a TTS problem, not
+a content one), and anything past 220 characters is cut on a word boundary.
+Every intervention is counted, like `persona/filters.py` — `name_blocked 2,
+message_blocked 5, truncated 3 of 40` is tunable where "that felt off" is not.
+
+### She finishes the sentence, then hands over the floor
+
+The order is TTS > alerts > commentary: `DONATION_PRIORITY = 1`,
+`ALERT_PRIORITY = 2`, game commentary 3+, idle filler 10. The collisions at 1
+and 2 are deliberate — a cheer is already one sentence and lands in the same
+moment a donation would, and his voice sits at 2 because anything above
+`VOICE_INTERRUPT_PRIORITY` is held by the gate while he is talking, which is
+exactly when he is asking her something.
+
+Priority alone was not enough. The busy flag covers a whole utterance, so a
+donation arriving on her first sentence waited out all three. Now
+`Dispatcher.more_important_waiting()` is asked **between sentences** by the
+response listener, and she stops after the one she is on. Not mid-sentence:
+cutting her off mid-word sounds worse than the two seconds it costs to let her
+land the line. Strictly more important, so an alert never interrupts another
+alert — otherwise a raid has her talking over herself — and an expired signal
+never takes the floor.
+
+A yielded line is recorded as `preempted` with what it yielded to, and counts
+as heard in the session metrics: she said part of it out loud, and that part is
+what a listener judges her by. `PREEMPT_ENABLED = False` restores the old
+finish-the-whole-answer behaviour.
+
+`python tests/test_alerts.py` — 80 checks.
+
 ### The cheer and the boo
 
 A game ends and she reacts to it **before** she has anything thoughtful to say:
@@ -1157,9 +1291,10 @@ champion tags are facts about the game. Different lifecycles.
 - `ravyn-nb` has no PR
 
 **Small**
-- Nothing bounds the *share* of a session spent at the top of the tone ladder —
-  the first measured session was 10/10 deaths at `sharp` or `roast`, 64% of her
-  lines aimed at him, 7 in a row. See §7 "Measuring it instead of remembering it"
+- ~~Nothing bounds the share of a session spent at the top of the tone
+  ladder~~ — **done**, §7 "Temper". `HEAT_FACTOR` and `MAX_HARSH_STREAK`
+  bound it; the measured 79%-hot, 15-in-a-row session is what set the numbers,
+  and the next one should be compared against it with `--compare`
 - `MyDeath` reached 5 of its 9 angles over 10 lines in that session — the pool
   is not the constraint, whatever is choosing from it is
 - Move the eleven older test suites out of the scratchpad into the repos

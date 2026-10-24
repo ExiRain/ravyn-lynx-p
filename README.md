@@ -1,11 +1,66 @@
 # Ravyn-Lynx PC — Orchestrator
 
-Decision engine for Ravyn's stream presence. Runs on the PC, manages all signal sources,
-and dispatches work to the notebook AI service over RabbitMQ.
+## What Ravyn is
 
-The notebook is a pure LLM service — it writes Ravyn's lines and nothing else.
-Everything the viewer experiences (what she reacts to, her voice, her face)
-lives here on the PC, which keeps the notebook's whole 4070 free for the model.
+A stream mascot with a voice and a face. She is not a co-host and not an
+assistant; she is the thing on screen that reacts, and her jobs are in this
+order:
+
+1. **Alerts and paid messages.** Read a donation over $2 out loud, thank subs,
+   follows, raids and bits — and eventually ask people to follow or subscribe.
+   This is her reason to exist, not a feature.
+2. **Chat.** Sometimes read a message and answer it.
+3. **League co-commentary.** A second voice over the game, under rules and
+   gates, never the main event.
+
+Her character is the point of all three: fox spirit, dry, loyal to one person
+(the streamer), rude about everyone losing him the game. What she must never be
+is repetitive, and what she must never do is read something that should not be
+said out loud.
+
+## What this repo is responsible for
+
+**Everything the viewer experiences.** What she reacts to, when she is allowed
+to speak, her voice, her face, and every measurement of how she is doing.
+
+The notebook (`ravyn-nb`) is a pure LLM service — it writes her lines and
+nothing else. TTS, audio streaming, the avatar and her busy/idle state all live
+here, which keeps the notebook's whole 4070 free for the model.
+
+## What works
+
+| | |
+|---|---|
+| **Dispatch** | priority queue with TTL, one signal in flight, busy watchdog, and she finishes a sentence before yielding the floor to something more important |
+| **Hearing him** | VAD gate, Whisper STT per utterance, name gate, and a guard against the decoder reciting its own prompt back |
+| **Speaking** | Qwen3-TTS voice cloning (Chatterbox fallback), sentence-by-sentence streaming, WebSocket to Godot with mood and face |
+| **League** | Live Client polling, measured game state, per-event angles, the streamer's tone rulebook, themes, champion notes, identity across accounts, the end-of-game cheer and boo |
+| **Chat** | Twitch IRC, one message picked per window by score |
+| **Idle** | silence filler — improv seeds through the LLM, or quotes straight to TTS |
+| **Language** | English and Russian, resolved before generation so the voice can be told too; a person's language sticks |
+| **Temper** | supportive / neutral / negative, moved by the session and clamping how hard she is allowed to be |
+| **Sanitizing** | viewer names and messages made safe to say out loud, with a blocklist matched against a normalised form |
+| **Measurement** | every line logged with what produced it, a three-line summary per game, and a running table across sessions |
+
+Eleven standalone test suites, no pytest and no network: `python tests/test_*.py`.
+
+## What is not built yet
+
+- **The alerts source.** Her first responsibility has no producer. The
+  sanitizer, the priorities and the notebook's donor memory are all in place;
+  nothing feeds them yet, because the integration depends on where the money
+  arrives (Twitch EventSub for bits and subs, something else for donations).
+  `sources/mock_events.py` fakes it for testing.
+- **Asking for a follow or a sub.** Her third alert responsibility, not yet
+  designed.
+- **A non-League mode.** `--no-lol` stops the game source, but her persona
+  still carries its League section, so she pulls other subjects back to the
+  game. Needs an `isLeague` flag that reaches the prompt.
+- **One view over both logs.** The PC records what she said and the notebook
+  records what the model was asked; they join on `req_id` and nothing reads
+  them together.
+- **Her Russian character.** She speaks Russian; the persona that makes her
+  *her* is English throughout.
 
 ## Architecture
 
@@ -16,8 +71,8 @@ PC (this repo)                              Notebook (Fedora)
 │  └─ Silence Filler        │              │                      │
 │  └─ Twitch Chat           │ ravyn.request│                      │
 │  └─ LoL Game API          ├─────────────►│  Worker → LLM        │
-│  └─ Twitch Events *       │              │         │            │
-│  └─ Voice Input *         │ravyn.response│         │            │
+│  └─ Alerts / donations *  │              │         │            │
+│  └─ Voice Input (STT)     │ravyn.response│         │            │
 │                           │◄─────────────┼─────────┘            │
 │  Priority Queue           │              └──────────────────────┘
 │  Dispatcher (owns busy)   │
@@ -28,7 +83,7 @@ PC (this repo)                              Notebook (Fedora)
 │    → Audio Server ────────┼──► WebSocket → Godot
 └───────────────────────────┘
 
-* = planned, not yet implemented
+* = not built yet — see "What is not built yet" above
 ```
 
 Ravyn is marked busy when the dispatcher publishes a request and idle again
@@ -74,16 +129,21 @@ sources/
   silence_filler.py    timer-based — improv seeds (LLM) or quotes (TTS direct)
 
 orchestrator/
+  sanitize.py          viewer text made safe to say out loud — names, messages
+  temper.py            the slow axis — supportive / neutral / negative
   session_log.py       every dispatched signal + her full reply, as JSONL
   session_metrics.py   what counts as a repeat — shared by the app and the CLI
 
 tools/
   analyze_session.py   repetition, knob attribution and heat, per session
   console_import.py    rebuilds a session from terminal scrollback
+  test_hearing.py      mic level + what Whisper made of it, per utterance
 
 data/
   stunts.json          improv seeds for LLM to riff on
   quotes.json          literal lines sent straight to TTS
+  blocklist.json       names and words she will never say
+  alert_lines.json     what she says instead when one of them cannot be read
 
 logs/                  session-<date>-<time>.jsonl (gitignored)
   history.csv          one row per game, tracked — safe to commit and share

@@ -328,14 +328,15 @@ def print_history(path: Path) -> None:
 
     print()
     print(f"  {'when':16} {'scope':8} {'lines':>5} {'repeat':>7} {'hot':>5} "
-          f"{'streak':>6} {'angles':>7}  {'most reused':38} log")
-    print("  " + "-" * 118)
+          f"{'streak':>6} {'temper':11} {'angles':>7}  {'most reused':34} log")
+    print("  " + "-" * 126)
     for row in rows:
         print(f"  {row.get('when',''):16} {row.get('scope',''):8} "
               f"{row.get('lines',''):>5} {row.get('repeat_pct','')+'%':>7} "
               f"{row.get('hot_pct','')+'%':>5} {row.get('streak',''):>6} "
+              f"{row.get('temper','') or '-':11} "
               f"{row.get('angles',''):>7}  "
-              f"{(row.get('top_repeat','') or '-')[:38]:38} {row.get('log','')}")
+              f"{(row.get('top_repeat','') or '-')[:34]:34} {row.get('log','')}")
     print()
 
     games = [r for r in rows if r.get("scope") == "game"
