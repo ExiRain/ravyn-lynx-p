@@ -257,17 +257,23 @@ class Sanitizer:
             return result
 
         text, removed = self._clean_message(message)
+
+        # Judged BEFORE truncating, and against a comparably collapsed
+        # original. Truncation is a deliberate cut rather than damage, and
+        # collapsing "spam spam spam spam" is the intended handling of it —
+        # neither should read as a message that did not survive.
+        if not _is_sayable(text, message):
+            result.message = ""
+            result.message_blocked = True
+            removed.append("message_unreadable")
+        else:
+            text, cut = self._truncate(text)
+            removed.extend(cut)
+            result.message = text
+
         result.removed.extend(removed)
         for what in removed:
             self.tally.hit(what)
-
-        if not _is_sayable(text):
-            result.message = ""
-            result.message_blocked = True
-            result.removed.append("message_unreadable")
-            self.tally.hit("message_unreadable")
-        else:
-            result.message = text
 
         return result
 
@@ -309,15 +315,17 @@ class Sanitizer:
                 text = text.capitalize()
                 removed.append("shouting")
 
-        if len(text) > self.max_message_chars:
-            cut = text[:self.max_message_chars]
-            # Break on a word, not mid-syllable.
-            if " " in cut:
-                cut = cut[:cut.rindex(" ")]
-            text = cut.rstrip(" ,;:-") + "..."
-            removed.append("truncated")
-
         return text, removed
+
+    def _truncate(self, text: str) -> tuple[str, list]:
+        if len(text) <= self.max_message_chars:
+            return text, []
+
+        cut = text[:self.max_message_chars]
+        # Break on a word, not mid-syllable.
+        if " " in cut:
+            cut = cut[:cut.rindex(" ")]
+        return cut.rstrip(" ,;:-") + "...", ["truncated"]
 
 
 def _speakable_name(name: str) -> str:
@@ -335,9 +343,36 @@ def _speakable_name(name: str) -> str:
     return name if len(LETTERS.findall(name)) >= 2 else ""
 
 
-def _is_sayable(text: str) -> bool:
-    """Enough letters left to be a sentence rather than debris."""
-    return len(LETTERS.findall(text)) >= 4
+# How much of a message has to survive cleaning for what is left to still be
+# the message. "AAAAAAAAAAAAAAAA check twitch.tv/someoneelse" cleans down to
+# "AA check", which passes a letter count and is not worth saying out loud.
+SURVIVAL_RATIO = 0.4
+
+
+def _collapse(text: str) -> str:
+    """Runs and repeated words gone — the form the ratio compares against."""
+    text = re.sub(r"(.)\1{2,}", r"\1\1", text or "")
+    return re.sub(r"\b(\w+)(\s+\1\b){2,}", r"\1 \1", text,
+                  flags=re.IGNORECASE)
+
+
+def _is_sayable(text: str, original: str = "") -> bool:
+    """
+    Enough of a sentence left to be worth saying, rather than debris.
+
+    The original is collapsed the same way the text was before they are
+    compared: measuring a de-duplicated message against its own padding would
+    fail every message that had padding, which is the common case.
+    """
+    left = len(LETTERS.findall(text))
+    if left < 4:
+        return False
+
+    was = len(LETTERS.findall(_collapse(original)))
+    if was and left / was < SURVIVAL_RATIO:
+        return False
+
+    return True
 
 
 # ---------------------------------------------------------------------

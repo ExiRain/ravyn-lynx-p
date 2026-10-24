@@ -13,6 +13,7 @@ Usage:
     python -m app.main --test         # mock sources
     python -m app.main --no-twitch
     python -m app.main --no-lol
+    python -m app.main --no-alerts    # no StreamElements polling
 """
 
 import sys
@@ -34,6 +35,7 @@ TEST_MODE = "--test" in sys.argv
 NO_TWITCH = "--no-twitch" in sys.argv
 NO_LOL = "--no-lol" in sys.argv
 NO_TTS = "--no-tts" in sys.argv
+NO_ALERTS = "--no-alerts" in sys.argv
 NO_VOICE = "--no-voice" in sys.argv
 NO_HEAR = "--no-hear" in sys.argv
 
@@ -56,6 +58,9 @@ def main():
         print(f"  Twitch: #{settings.TWITCH_CHANNEL}")
     if not NO_LOL and not TEST_MODE:
         print(f"  LoL: active")
+    if not NO_ALERTS and not TEST_MODE:
+        print(f"  Alerts: StreamElements"
+              + ("" if settings.SE_JWT else "  (no RAVYN_SE_JWT — off)"))
     if tts_enabled:
         print(f"  Audio: ws://localhost:{settings.AUDIO_SERVER_PORT}/ws/audio")
     print("=" * 50)
@@ -164,6 +169,15 @@ def main():
 
         dispatcher.on_dispatch(_sync_game)
         Thread(target=lol.run, daemon=True, name="lol-game").start()
+
+    # --- Alerts and donations (StreamElements) ---
+    # Her first responsibility. Quote signals only — the name and the message
+    # are sanitised here and go straight to TTS, so nothing a viewer wrote
+    # ever reaches the model. Silent without RAVYN_SE_JWT.
+    if not NO_ALERTS and not TEST_MODE:
+        from sources.stream_elements import StreamElementsSource
+        alerts = StreamElementsSource(queue, DATA_DIR)
+        Thread(target=alerts.run, daemon=True, name="stream-elements").start()
 
     # --- Twitch ---
     if not NO_TWITCH and not TEST_MODE:

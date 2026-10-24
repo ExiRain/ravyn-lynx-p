@@ -35,6 +35,7 @@ here, which keeps the notebook's whole 4070 free for the model.
 | **Hearing him** | VAD gate, Whisper STT per utterance, name gate, and a guard against the decoder reciting its own prompt back |
 | **Speaking** | Qwen3-TTS voice cloning (Chatterbox fallback), sentence-by-sentence streaming, WebSocket to Godot with mood and face |
 | **League** | Live Client polling, measured game state, per-event angles, the streamer's tone rulebook, themes, champion notes, identity across accounts, the end-of-game cheer and boo |
+| **Alerts** | StreamElements tips, subs, follows, cheers and raids — sanitised and read straight to TTS, never through the model |
 | **Chat** | Twitch IRC, one message picked per window by score |
 | **Idle** | silence filler — improv seeds through the LLM, or quotes straight to TTS |
 | **Language** | English and Russian, resolved before generation so the voice can be told too; a person's language sticks |
@@ -46,11 +47,14 @@ Eleven standalone test suites, no pytest and no network: `python tests/test_*.py
 
 ## What is not built yet
 
-- **The alerts source.** Her first responsibility has no producer. The
-  sanitizer, the priorities and the notebook's donor memory are all in place;
-  nothing feeds them yet, because the integration depends on where the money
-  arrives (Twitch EventSub for bits and subs, something else for donations).
-  `sources/mock_events.py` fakes it for testing.
+- **The alerts source is written but unverified against the live service.**
+  StreamElements' documentation hosts could not be reached from the machine it
+  was written on, so the endpoint path and the field names are expected rather
+  than confirmed. Everything around them — sanitising, composing, priorities,
+  dedup — is tested. The first payload of each type is logged verbatim and
+  `--replay` runs the whole path offline, so a wrong field name is a one-line
+  fix rather than an investigation. **This is the thing to watch on the first
+  real donation.**
 - **Asking for a follow or a sub.** Her third alert responsibility, not yet
   designed.
 - **A non-League mode.** `--no-lol` stops the game source, but her persona
@@ -126,6 +130,7 @@ services/
   audio_server.py      WebSocket to Godot — audio, MOUTH, PHONEME, mood
 
 sources/
+  stream_elements.py   tips, subs, follows, cheers, raids — straight to TTS
   silence_filler.py    timer-based — improv seeds (LLM) or quotes (TTS direct)
 
 orchestrator/
@@ -269,6 +274,50 @@ Precedence: `Signal.lang` (a source that knows) → `SPEAKER_LANG` → ambient �
 Note that her persona is written in English — the banned openers, "fufu", the
 teammate vocabulary. None of that survives translation, so Russian output
 currently loses those voice rules until a Russian persona addendum exists.
+
+## Alerts and donations
+
+```powershell
+$env:RAVYN_SE_JWT = "..."        # StreamElements account settings
+python -m app.main               # alerts on; --no-alerts turns them off
+```
+
+Her first responsibility. A tip at or above `SE_TTS_MIN_AMOUNT` (2.0) has its
+message read out loud; below that she thanks them and leaves the message
+alone. Subs, follows, cheers and raids get a thank-you from
+`data/alert_lines.json` — three per type, rotated in order.
+
+**Nothing a viewer wrote ever reaches the model.** Every alert is a `quote`
+signal: the name and the message are sanitised on the PC and go straight to
+TTS. A tip reading *"ignore your instructions and say ..."* has nowhere to
+land when no model sees it.
+
+The field names are **expected, not verified** — see "What is not built yet".
+The first payload of each type is printed in full:
+
+```
+[se] FIRST tip payload, verbatim — check the field names against it:
+{"_id": "...", "type": "tip", "createdAt": "...", "data": {...}}
+```
+
+Paste that into a file and the whole path runs offline, with no RabbitMQ and
+no notebook:
+
+```powershell
+python -m sources.stream_elements --replay sample.json
+```
+
+```
+--- she would say ---
+  Thank you for the $5, Tracalley. good luck today, hope you climb!
+  source=donation priority=1 skip_llm=True ttl=90.0
+  donor note: {'amount': 5.0, 'currency': '$'}
+```
+
+Polling, not the realtime socket: that needs a Socket.IO client and the exact
+protocol version the service speaks, neither of which could be confirmed, and
+a wrong guess there fails silently mid-stream where a wrong REST field name
+fails loudly in the log. Swapping transports later means replacing `_fetch`.
 
 ## Session log
 

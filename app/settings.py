@@ -1,4 +1,14 @@
+import os
 from dataclasses import dataclass
+
+
+def _env(key: str, default: str = "") -> str:
+    """
+    Secrets come from the environment, never from this file — it is committed
+    to a public repo.
+    """
+    value = os.getenv(key)
+    return value if value not in (None, "") else default
 
 
 @dataclass
@@ -237,6 +247,33 @@ class Settings:
     # something. Ties break on arrival order (Signal.__lt__).
     DONATION_PRIORITY = 1
     ALERT_PRIORITY = 2
+
+    # --- StreamElements (alerts and donations) ---
+    # The token is read from the environment and never stored here: this file
+    # is committed to a public repo.
+    #
+    #   PowerShell, this session only:   $env:RAVYN_SE_JWT = "..."
+    #   permanently:                     setx RAVYN_SE_JWT "..."
+    #
+    # From your StreamElements account settings (the JWT / API token for your
+    # channel). Without it the source says so once and does nothing — the rest
+    # of her carries on.
+    SE_JWT = _env("RAVYN_SE_JWT", "")
+
+    # Normally resolved from the token. Set it only if that call fails.
+    SE_CHANNEL_ID = _env("RAVYN_SE_CHANNEL", "")
+
+    # At or above this she READS THE MESSAGE out loud. Below it she thanks
+    # them and leaves the message alone — the streamer's rule, and the reason
+    # a two-dollar floor exists at all.
+    SE_TTS_MIN_AMOUNT = 2.0
+
+    SE_POLL_INTERVAL = 4.0          # seconds between checks
+    SE_LOOKBACK_MINUTES = 10        # how far back a poll looks
+
+    # A thank-you that arrives two minutes late is worse than none: the moment
+    # it belonged to is over and the viewer has gone.
+    SE_TTL = 90.0
 
     # She finishes the sentence she is on, then hands the floor over if
     # something more important arrived while she was talking. Checked between

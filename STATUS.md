@@ -180,6 +180,10 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
+- `python tests/test_stream_elements.py` — 75 checks: parsing including the
+  alternative spellings, the two-dollar threshold, blocked names and messages,
+  bits as a count, dedup across a restart, and that no alert can ever reach
+  the model
 - `python tests/test_join_logs.py` — 14 checks: the two files matching on
   req_id, and each of the four readings against a fixture built to produce it
 - `python tests/test_temper.py` — 50 checks: the three registers, what moves
@@ -1191,6 +1195,51 @@ comes back twice, SHOUTING is lowered rather than blocked (a TTS problem, not
 a content one), and anything past 220 characters is cut on a word boundary.
 Every intervention is counted, like `persona/filters.py` — `name_blocked 2,
 message_blocked 5, truncated 3 of 40` is tunable where "that felt off" is not.
+
+### Where the money arrives — StreamElements
+
+The producer the sanitizer was waiting for. `sources/stream_elements.py` polls
+the activities feed and pushes **quote signals only**: a tip at or above
+`SE_TTS_MIN_AMOUNT` has its message read, below it she thanks them and stops,
+and subs, follows, cheers and raids get a rotated thank-you from
+`data/alert_lines.json`.
+
+**The token is read from the environment** (`RAVYN_SE_JWT`) and never stored
+in `settings.py` — this repo is public.
+
+**One part of this file is not verified.** The StreamElements documentation
+hosts did not resolve from the machine it was written on, so the endpoint path
+and the field names are *expected*. That uncertainty is confined to
+`_parse_activity`, which tries several spellings of each field and tolerates
+missing ones, and it is bounded three ways:
+
+- the **first payload of each type is logged verbatim**, so the first real tip
+  tells the truth
+- `--replay` runs parse → sanitise → compose offline against a saved payload,
+  so a corrected field name is checked in seconds rather than by waiting for a
+  donation
+- everything that is *ours* — composing, priorities, dedup, the two-dollar
+  threshold, the blocked-name fallback — has 75 checks that do not depend on
+  the payload shape being right
+
+**Polling rather than the realtime socket**, deliberately. Realtime is the
+better transport and instant where this is up to `SE_POLL_INTERVAL` late, but
+it needs a Socket.IO client dependency and the exact protocol version the
+service speaks — neither confirmable here, and a wrong guess there fails
+*silently* mid-stream where a wrong REST field name fails loudly in the log.
+Replacing `_fetch` swaps the transport and leaves everything below it.
+
+**A restart does not replay the evening.** The first sweep records every
+activity already inside the lookback window without speaking any of it.
+
+**Two live-behaviour bugs were caught by the fixtures rather than on stream.**
+A message cleaned down to debris — `"AAAAAAAAAAAAAAAA check
+twitch.tv/someoneelse"` becoming `"AA check"` — passed a letter count and
+would have been read out loud, so a message now has to keep 40% of its letters
+to still count as the message, measured against a comparably collapsed
+original (judging a de-duplicated message against its own padding fails every
+message that had padding). And bits were being priced in dollars: `"cheered
+$500"` where 500 is a count, not money.
 
 ### She finishes the sentence, then hands over the floor
 

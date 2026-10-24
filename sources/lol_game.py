@@ -1112,7 +1112,15 @@ class LolGameSource:
         # Harder temper, FEWER lines. A pointed remark every so often lands;
         # one every forty seconds is the 79%-hot session the streamer asked
         # temper to fix. See orchestrator/temper.py.
-        chance *= self.temper.heat_factor()
+        #
+        # NOT the moments that have to land. The same threshold that lets subs
+        # and donations through the voice gate protects GameStart, GameEnd and
+        # the cheer here: a 25% chance of saying nothing at all about a game
+        # she just watched him lose is not "speaking less", it is a bug — and
+        # it is the same bug as the burst decay silently eating deaths the
+        # rulebook says always land (§7).
+        if config["priority"] > settings.VOICE_INTERRUPT_PRIORITY:
+            chance *= self.temper.heat_factor()
 
         if chance < 1.0 and random.random() > chance:
             print(f"[lol] {config_key}: skipped (chance {chance:.2f})")
