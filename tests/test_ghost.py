@@ -83,7 +83,20 @@ class _App:
 _fastapi.FastAPI = _App
 _fastapi.WebSocket = type("WebSocket", (), {})
 _fastapi.WebSocketDisconnect = type("WebSocketDisconnect", (Exception,), {})
+_fastapi.Body = lambda *a, **k: None   # only used as a default-value marker
 sys.modules.setdefault("fastapi", _fastapi)
+
+_fastapi_responses = types.ModuleType("fastapi.responses")
+
+
+class _JSONResponse:
+    def __init__(self, content=None, status_code=200):
+        self.content = content
+        self.status_code = status_code
+
+
+_fastapi_responses.JSONResponse = _JSONResponse
+sys.modules.setdefault("fastapi.responses", _fastapi_responses)
 
 from app.settings import Settings, get_settings                   # noqa: E402
 from services import audio_server                                 # noqa: E402

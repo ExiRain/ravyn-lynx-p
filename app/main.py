@@ -30,6 +30,13 @@ The rest are switches for debugging, not modes:
     python -m app.main --no-alerts    # no StreamElements polling
     python -m app.main --no-promo     # she never asks for a follow or a sub
     python -m app.main --test         # mock sources
+    python -m app.main --debug-alerts # /debug/alert and /debug/promo fire a
+                                       # test event through the live pipeline
+                                       # — real TTS, real Godot, no donation
+                                       # or gate wait needed. Needs TTS on
+                                       # (it rides the audio server). See
+                                       # tools/test_live.py and
+                                       # tools/fire_alert.py.
 """
 
 import sys
@@ -54,6 +61,7 @@ NO_ALERTS = "--no-alerts" in sys.argv
 NO_PROMO = "--no-promo" in sys.argv
 NO_VOICE = "--no-voice" in sys.argv
 NO_HEAR = "--no-hear" in sys.argv
+DEBUG_ALERTS = "--debug-alerts" in sys.argv
 
 # The two modes. Off by default and turned on per run — one shortcut per kind
 # of stream, rather than a default that has to be argued out of.
@@ -217,6 +225,7 @@ def main():
     # Her first responsibility. Quote signals only — the name and the message
     # are sanitised here and go straight to TTS, so nothing a viewer wrote
     # ever reaches the model. Silent without RAVYN_SE_JWT.
+    alerts = None
     if not NO_ALERTS and not TEST_MODE:
         from sources.stream_elements import StreamElementsSource
         alerts = StreamElementsSource(queue, DATA_DIR)
@@ -236,6 +245,35 @@ def main():
         Thread(target=MockChatSource(queue, 15.0, 45.0).run, daemon=True).start()
         Thread(target=MockEventSource(queue, 30.0, 90.0).run, daemon=True).start()
         Thread(target=MockGameSource(queue, 20.0, 60.0).run, daemon=True).start()
+
+    # --- Debug: fire alerts/promos into the live pipeline on demand ---
+    # Opt-in and needs TTS (the endpoints ride the audio server's FastAPI
+    # app) — see services/audio_server.py and tools/test_live.py.
+    if DEBUG_ALERTS:
+        if not tts_enabled:
+            print("[debug] --debug-alerts needs TTS on (it rides the audio "
+                  "server) — drop --no-tts to use it")
+        else:
+            from services.audio_server import (register_alert_injector,
+                                               register_promo_injector)
+            hooked = []
+            if alerts is not None:
+                register_alert_injector(alerts._handle)
+                hooked.append("follow/sub/tip/cheer/raid")
+            if promo is not None:
+                register_promo_injector(
+                    fire=promo.fire,
+                    status=lambda: promo._blocked(time.time()))
+                hooked.append("promo")
+            if hooked:
+                print(f"[debug] Live test endpoints up for: "
+                      f"{', '.join(hooked)} — "
+                      f"http://localhost:{settings.AUDIO_SERVER_PORT}/debug/..."
+                      f"\n[debug] Run: python tools/test_live.py")
+            else:
+                print("[debug] --debug-alerts has nothing to hook into — "
+                      "both alerts and promo are disabled "
+                      "(--no-alerts/--no-promo/--test)")
 
     # --- Run dispatcher (blocks) ---
     try:
