@@ -255,11 +255,13 @@ def main():
                   "server) — drop --no-tts to use it")
         else:
             from services.audio_server import (register_alert_injector,
-                                               register_promo_injector)
+                                               register_promo_injector,
+                                               register_sanitizer)
             hooked = []
             if alerts is not None:
                 register_alert_injector(alerts._handle)
-                hooked.append("follow/sub/tip/cheer/raid")
+                register_sanitizer(alerts.sanitizer)
+                hooked.append("follow/sub/tip/cheer/raid/sanitizer-check")
             if promo is not None:
                 register_promo_injector(
                     fire=promo.fire,

@@ -255,11 +255,17 @@ def has_clients() -> bool:
 # one that is visibly off by default.
 _alert_injector = None
 _promo_injector = None   # (fire, status) — see register_promo_injector
+_sanitizer_ref = None    # the live Sanitizer, for /debug/sanitizer-check
 
 
 def register_alert_injector(handler) -> None:
     global _alert_injector
     _alert_injector = handler
+
+
+def register_sanitizer(sanitizer) -> None:
+    global _sanitizer_ref
+    _sanitizer_ref = sanitizer
 
 
 def register_promo_injector(fire, status) -> None:
@@ -294,6 +300,46 @@ async def debug_alert(activity: dict = Body(...)):
                 "reason": "parsed to nothing — unknown type, duplicate id, "
                           "or a field name that did not match"}
     return {"fired": True, "text": signal.text, "source": signal.source}
+
+
+@app.get("/debug/sanitizer-check")
+async def debug_sanitizer_check():
+    """
+    Proves the live blocklist actually catches something, without ever
+    printing the flagged term anywhere — it never leaves this process.
+
+    Picks one real entry from YOUR data/blocklist.json (not a hardcoded
+    guess) and runs it through the same Sanitizer.clean() every donation
+    goes through, once embedded in a name and once in a message. Answers
+    whether each was caught — the file loading with N entries only proves
+    it parsed, not that a real hit gets replaced before TTS ever sees it.
+    """
+    if _sanitizer_ref is None:
+        return JSONResponse(
+            {"error": "debug alerts are off — start app.main with "
+                      "--debug-alerts to turn this on"},
+            status_code=404,
+        )
+
+    import random
+    bl = _sanitizer_ref.blocklist
+    terms = list(bl.substrings) + list(bl.words)
+    if not terms:
+        return {"checked": False,
+                "reason": "blocklist.json has no entries loaded — "
+                          "nothing is being filtered right now"}
+
+    term = random.choice(terms)
+    name_result = _sanitizer_ref.clean(f"user_{term}_test", "")
+    message_result = _sanitizer_ref.clean(
+        "test_user", f"this message has {term} hidden in it")
+
+    return {
+        "checked": True,
+        "name_blocked": bool(name_result.name_blocked),
+        "message_blocked": bool(message_result.message_blocked),
+        "entries_in_blocklist": len(terms),
+    }
 
 
 @app.post("/debug/promo")
