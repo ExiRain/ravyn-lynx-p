@@ -324,7 +324,17 @@ def start_response_listener(
     def _play(opening, rest: list[str], mood: float, tired: float,
               lang: str, had_clients: bool):
         _run_async(audio_server.begin_utterance(mood, tired), timeout=5)
+        try:
+            _stream(opening, rest, mood, tired, lang, had_clients)
+        finally:
+            # Ghost mode's fade out, after the playback wait in _stream — not
+            # at END, which is when the last chunk was SENT and she still had
+            # most of the line to say. In a finally, so a failure mid-line
+            # cannot leave her sitting on top of the game.
+            _run_async(audio_server.fade_out(), timeout=5)
 
+    def _stream(opening, rest: list[str], mood: float, tired: float,
+                lang: str, had_clients: bool):
         total = len(rest) + 1
         first_audio_at = None
         total_duration = 0.0
