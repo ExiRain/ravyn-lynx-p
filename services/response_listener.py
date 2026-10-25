@@ -336,8 +336,14 @@ def start_response_listener(
     def _stream(opening, rest: list[str], mood: float, tired: float,
                 lang: str, had_clients: bool):
         total = len(rest) + 1
-        first_audio_at = None
-        total_duration = 0.0
+        # When Godot will finish what it has been sent. Each sentence plays
+        # after the previous one ends OR when it arrives, whichever is later:
+        # a sentence that took longer to synthesise than the last one took to
+        # play leaves a silence, and in the 2026-10-25 15:06 session 35 of 120
+        # sentence boundaries did, by up to 2.7s. The old estimate (first
+        # audio + summed durations) ignored those silences, so ghost mode
+        # faded her out before her last sentence ended.
+        play_until = None
 
         sentence, wav_bytes, gen_s = opening
         yielded_to = ""
@@ -364,16 +370,14 @@ def start_response_listener(
                 audio_server.push_sentence(
                     wav_bytes,
                     text=sentence,
-                    is_first=first_audio_at is None,
+                    is_first=play_until is None,
                     sample_rate=tts.sr,
                 ),
                 timeout=15,
             ) or 0.0
 
-            if first_audio_at is None:
-                first_audio_at = time.time()
-
-            total_duration += duration
+            arrived = time.time()
+            play_until = max(play_until or arrived, arrived) + duration
 
             session_log.get().spoke_sentence(sentence, gen_s=gen_s,
                                              audio_s=duration)
@@ -387,12 +391,12 @@ def start_response_listener(
             session_log.get().finished(
                 "preempted", note=f"yielded to {yielded_to}")
 
-        # Hold busy until Godot has actually finished playing. Measured from
-        # when the first audio went out, not from now — Godot has been playing
-        # sentence 1 while the later ones were still generating, so sleeping
-        # the full total here would leave dead air between utterances.
-        if had_clients and first_audio_at is not None:
-            remaining = (first_audio_at + total_duration) - time.time()
+        # Hold busy until Godot has actually finished playing. Not the full
+        # total from now — Godot has been playing sentence 1 while the later
+        # ones were still generating, so that would leave dead air between
+        # utterances.
+        if had_clients and play_until is not None:
+            remaining = play_until - time.time()
             if remaining > 0:
                 print(f"[response] Waiting {remaining:.1f}s for playback")
                 time.sleep(remaining)

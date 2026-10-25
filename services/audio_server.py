@@ -7,7 +7,8 @@ know the difference. Runs on the PC alongside the game.
 Protocol (one utterance):
   MOOD:float         → mood value
   TIRED:float        → tired value
-  SHOW:pct:fade_ms   → ghost mode only: fade her in before she speaks
+  SHOW:pct:fade_ms   → ghost mode only: fade her in before she speaks (not
+                       sent if she is still up from the previous line)
   START              → audio incoming
     first sentence only:
       RATE:int         → the sample rate the PCM is at
@@ -16,18 +17,19 @@ Protocol (one utterance):
       MOUTH:float      → lip sync envelope
       PHONEME:p:t      → phoneme timeline
   END                → audio done (sent, not yet played)
-  SHOW:0:fade_ms     → ghost mode only: fade her out again, once Godot has
-                       finished PLAYING — not straight after END
+  SHOW:0:fade_ms     → ghost mode only: fade her out again, GHOST_LINGER_S
+                       after Godot has finished PLAYING — not straight after
+                       END — and cancelled if her next line starts first
 
 Sentences are streamed as they are generated, so Godot starts playing
 sentence 1 while sentence 2 is still being synthesised.
 
 GHOST MODE (`--ghost`, for a stream where the screen is not a game): she is
-invisible until she speaks. `SHOW:100:200` before START, `SHOW:0:400` once
-her audio has finished playing, and Godot fades her alpha over that many
-milliseconds. Nothing is sent
-when ghost mode is off, so a Godot build that ignores SHOW behaves exactly as
-it does today.
+invisible until she speaks. `SHOW:100:200` before START, `SHOW:0:400` a
+second after her audio has finished playing, and Godot fades her alpha over
+that many milliseconds. On connect Godot is told her current state (`SHOW:0:0`
+or `SHOW:100:0`). Nothing is sent when ghost mode is off, so a Godot build
+that ignores SHOW behaves exactly as it does today.
 
 Visibility deliberately follows the UTTERANCE rather than the amplitude:
 alpha driven straight from the audio would strobe, because speech hits zero
@@ -61,6 +63,12 @@ WAV_HEADER_SIZE = 44
 # envelope state — reset per utterance, see begin_utterance()
 _running_peak = 1e-6
 _previous_env = 0.0
+
+# Ghost mode visibility. Only ever touched on the server's event loop.
+# _visible is what Godot was last told; _fade_task is a pending fade out,
+# cancelled if she starts speaking again before it fires.
+_visible = False
+_fade_task: asyncio.Task | None = None
 
 # phonemizer is optional: it needs espeak-ng installed as a system package,
 # which is awkward on Windows. Without it Godot still gets MOUTH (amplitude
@@ -104,12 +112,13 @@ async def websocket_endpoint(ws: WebSocket):
     clients.add(ws)
     print("[audio_server] Godot connected")
 
-    # Ghost mode starts her hidden. Godot loads her fully visible, so without
-    # this she sat on top of the game until her first line — and again after
-    # any reconnect.
+    # Ghost mode: tell a newly connected Godot what she should look like NOW.
+    # Godot loads her fully visible, so without this she sat on top of the
+    # game until her first line. Mirrors the current state rather than always
+    # hiding, so a reconnect mid-line does not blank her while she talks.
     if settings.GHOST_MODE:
         try:
-            await ws.send_text("SHOW:0:0")
+            await ws.send_text("SHOW:100:0" if _visible else "SHOW:0:0")
         except Exception:
             clients.discard(ws)
 
@@ -173,7 +182,7 @@ async def begin_utterance(mood: float = 0.0, tired: float = 0.0) -> None:
     # Before START, so the fade has run by the time the first syllable
     # arrives: appearing mid-word is worse than not fading at all.
     if settings.GHOST_MODE:
-        await set_visibility(100, settings.GHOST_FADE_IN_MS)
+        await _ghost_show()
 
     await send_text_to_godot("START")
 
@@ -247,14 +256,52 @@ async def fade_out() -> None:
     It used to go out with END, i.e. when the last chunk was SENT. TTS runs
     several times faster than real time, so a twelve-second line was sent in
     about three and she vanished for the rest of it while still talking; a
-    one-sentence line faded out milliseconds after it faded in. In the
-    2026-10-25 ghost session she was effectively never visible.
+    one-sentence line faded out milliseconds after it faded in.
 
-    Slower than the fade in: vanishing on the last syllable reads as a glitch,
-    lingering for a moment reads as her having finished.
+    Scheduled GHOST_LINGER_S later rather than sent now: the PC's idea of
+    when playback ended cannot see Godot's own buffering, and if her next
+    line starts inside the linger, begin_utterance cancels this and she just
+    stays. Returns immediately — the response listener is not held by it.
     """
-    if settings.GHOST_MODE:
-        await set_visibility(0, settings.GHOST_FADE_OUT_MS)
+    global _fade_task
+    if not settings.GHOST_MODE:
+        return
+    _cancel_fade()
+    _fade_task = asyncio.get_running_loop().create_task(
+        _fade_after(settings.GHOST_LINGER_S))
+
+
+async def _fade_after(delay: float) -> None:
+    global _visible
+    try:
+        await asyncio.sleep(delay)
+    except asyncio.CancelledError:
+        return
+    _visible = False
+    # Slower than the fade in: vanishing on the last syllable reads as a
+    # glitch, lingering for a moment reads as her having finished.
+    await set_visibility(0, settings.GHOST_FADE_OUT_MS)
+
+
+def _cancel_fade() -> None:
+    global _fade_task
+    if _fade_task is not None and not _fade_task.done():
+        _fade_task.cancel()
+    _fade_task = None
+
+
+async def _ghost_show() -> None:
+    """
+    Fade her in, unless she never left. A line that starts inside the
+    previous line's linger keeps her on screen with no message at all: an
+    out-and-back-in between two lines is the flicker, and two overlapping
+    fades are exactly what Godot can get wrong.
+    """
+    global _visible
+    _cancel_fade()
+    if not _visible:
+        _visible = True
+        await set_visibility(100, settings.GHOST_FADE_IN_MS)
 
 
 async def send_face(face_type: str):
