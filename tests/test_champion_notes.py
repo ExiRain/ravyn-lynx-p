@@ -208,14 +208,18 @@ def test_shipped_file_is_valid():
     check("it parses and loads roles", len(notes.roles) >= 3, str(len(notes.roles)))
     check("it carries a readme", "_readme" in json.loads(path.read_text()))
 
-    # The shipped file is a template. Its example text must be INERT: it went
-    # to the model on the first live run and she opened a game with "That only
-    # when a friend duos comment? It sounds like you're just trying to explain
-    # away" — gamely trying to parse the literal word PLACEHOLDER.
+    # The file now carries real data for Riven/Ashe/Katarina, but Riven's
+    # offrole_read and her Garen matchup are still untouched placeholders.
+    # Those specific fields must stay INERT: a placeholder reaching the model
+    # on the first live run had her open a game with "That only when a friend
+    # duos comment? It sounds like you're just trying to explain away" —
+    # gamely trying to parse the literal word PLACEHOLDER.
     read = notes.read("Riven", "middle", ENEMIES)
-    check("the shipped placeholders produce no notes at all", not bool(read))
-    check("and nothing is rendered for the prompt", read.render() == "",
-          read.render()[:80])
+    check("real data now produces notes", bool(read))
+    check("but the off-role note is still a placeholder, so it's dropped",
+          "still learning her anywhere but top" not in read.render())
+    check("and the still-placeholder matchup is dropped too",
+          read.matchups == [], str(read.matchups))
     check("PLACEHOLDER never reaches the model",
           "PLACEHOLDER" not in read.render())
 

@@ -45,30 +45,30 @@
   ],
   "roles": {
     "top": {
-      "skill": "best",
-      "read": "PLACEHOLDER — comfort zone, splitpushes into oblivion"
+      "skill": "ok",
+      "read": "Normally I don't care about winning up here — just playing for fun"
     },
     "jungle": {
       "skill": "worst",
-      "read": "PLACEHOLDER — not even trying to win, just farming camps"
+      "read": "Not trying to win jungle, just farming camps and vibing"
     },
     "middle": {
       "skill": "ok",
-      "read": "PLACEHOLDER — fine at it, never practises it"
+      "read": "Mid is where I mess around — not really trying to win"
     },
     "bottom": {
       "skill": "ok",
-      "read": "PLACEHOLDER — only when a friend duos"
+      "read": "Bottom lane, I'm not sweating the result"
     },
     "support": {
       "skill": "none",
-      "read": "PLACEHOLDER — passing time, zero effort"
+      "read": "Zero effort back here, just passing time"
     }
   },
   "champions": {
     "Riven": {
       "main_role": "top",
-      "history": "PLACEHOLDER — plays her constantly and still loses with her",
+      "history": "I'm relearning how to actually win on her again, not just take fights to take them",
       "offrole_read": "PLACEHOLDER — still learning her anywhere but top",
       "matchups": {
         "Garen": "PLACEHOLDER — never wins this lane, takes the fight anyway"
@@ -76,6 +76,14 @@
       "tags": [
         "melee"
       ]
+    },
+    "Ashe": {
+      "main_role": "bottom",
+      "history": "I'm genuinely tryharding on her right now — actually focused instead of coasting"
+    },
+    "Katarina": {
+      "main_role": "middle",
+      "history": "I know she's a bad pick if you actually want to climb, and I play her anyway"
     },
     "Garen": {
       "tags": [
