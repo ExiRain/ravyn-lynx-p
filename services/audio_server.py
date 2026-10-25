@@ -7,15 +7,29 @@ know the difference. Runs on the PC alongside the game.
 Protocol (one utterance):
   MOOD:float         → mood value
   TIRED:float        → tired value
+  SHOW:pct:fade_ms   → ghost mode only: fade her in before she speaks
   START              → audio incoming
+    first sentence only:
+      RATE:int         → the sample rate the PCM is at
     per sentence:
       <binary chunks>  → WAV audio data (header on the first sentence only)
       MOUTH:float      → lip sync envelope
       PHONEME:p:t      → phoneme timeline
   END                → audio done
+  SHOW:0:fade_ms     → ghost mode only: fade her out again
 
 Sentences are streamed as they are generated, so Godot starts playing
 sentence 1 while sentence 2 is still being synthesised.
+
+GHOST MODE (`--ghost`, for a stream where the screen is not a game): she is
+invisible until she speaks. `SHOW:100:200` before START, `SHOW:0:400` after
+END, and Godot fades her alpha over that many milliseconds. Nothing is sent
+when ghost mode is off, so a Godot build that ignores SHOW behaves exactly as
+it does today.
+
+Visibility deliberately follows the UTTERANCE rather than the amplitude:
+alpha driven straight from the audio would strobe, because speech hits zero
+between syllables. MOUTH already carries that detail.
 """
 
 from __future__ import annotations
@@ -24,6 +38,13 @@ import asyncio
 import time
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
+from app.settings import get_settings
+
+# Read per call rather than copied into a local: `--ghost` is written onto the
+# class in app/main.py, and a snapshot taken at import time would have been
+# the default instead of the flag.
+settings = get_settings()
 
 app = FastAPI()
 
@@ -111,6 +132,16 @@ async def send_bytes_to_godot(data: bytes):
 # UTTERANCE STREAMING
 # =========================================================
 
+async def set_visibility(percent: int, fade_ms: int) -> None:
+    """
+    Ghost mode: how visible she should be, and how long to take about it.
+
+    0 is gone, 100 is fully there. Sent only in ghost mode — see the module
+    docstring for why this follows the utterance rather than the waveform.
+    """
+    await send_text_to_godot(f"SHOW:{int(percent)}:{int(fade_ms)}")
+
+
 async def begin_utterance(mood: float = 0.0, tired: float = 0.0) -> None:
     """Open an utterance: reset lip sync state, send mood, send START."""
     global _running_peak, _previous_env
@@ -126,6 +157,12 @@ async def begin_utterance(mood: float = 0.0, tired: float = 0.0) -> None:
 
     await send_text_to_godot(f"MOOD:{mood}")
     await send_text_to_godot(f"TIRED:{tired}")
+
+    # Before START, so the fade has run by the time the first syllable
+    # arrives: appearing mid-word is worse than not fading at all.
+    if settings.GHOST_MODE:
+        await set_visibility(100, settings.GHOST_FADE_IN_MS)
+
     await send_text_to_godot("START")
 
 
@@ -152,6 +189,16 @@ async def push_sentence(
 
     duration = len(pcm_samples) / sample_rate
 
+    # The rate the PCM is actually at, said out loud once per utterance.
+    #
+    # It was never sent, and Godot assumed 24000 — which is only true while
+    # the TTS happens to run there. `TTSEngine.sample_rate` is read from the
+    # loaded model (`self.sample_rate = int(sr)`), so a backend or checkpoint
+    # at 22050 or 48000 would have played her back at the wrong pitch and
+    # drifted the lip sync, with nothing in either log to say why.
+    if is_first:
+        await send_text_to_godot(f"RATE:{int(sample_rate)}")
+
     # audio
     for i in range(0, len(payload), AUDIO_CHUNK_BYTES):
         await send_bytes_to_godot(payload[i:i + AUDIO_CHUNK_BYTES])
@@ -175,6 +222,13 @@ async def push_sentence(
 async def end_utterance() -> None:
     """Close an utterance."""
     await send_text_to_godot("END")
+
+    # After END, and a slower fade than the way in: vanishing on the last
+    # syllable reads as a glitch, while lingering for a moment reads as her
+    # having finished.
+    if settings.GHOST_MODE:
+        await set_visibility(0, settings.GHOST_FADE_OUT_MS)
+
     ts = time.strftime("%H:%M:%S")
     print(f"[{ts}][audio_server] END")
 

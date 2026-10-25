@@ -67,6 +67,59 @@ The notebook publishes **exactly one** `ravyn.response` per request, including o
 empty output and failures. The PC clears its busy flag on that reply, so a
 dropped one stalls the dispatcher until the 90s watchdog fires.
 
+### Godot — the third machine, and the one with no git
+
+`ravyn-lynx-godot` has **no version control**, so the avatar script exists in
+exactly one place: `res://scripts/main.gd` on the streaming PC. A bad edit
+there has no way back. `git init` in that folder costs one command and is the
+single highest-value thing left on this list.
+
+What the PC sends it, all of it text over `ws://localhost:9000/ws/audio`:
+
+| | |
+|---|---|
+| `MOOD:float` / `TIRED:float` | per utterance, before START |
+| `SHOW:percent:fade_ms` | ghost mode only — before START and after END |
+| `START` / `END` | utterance boundaries |
+| `RATE:int` | the PCM sample rate, with the first sentence only |
+| `MOUTH:float` | lip sync envelope, per chunk |
+| `PHONEME:p:t` | phoneme timeline, per sentence |
+
+`SHOW` and `RATE` are additive: a build that ignores them behaves as it always
+did, which is why neither needs the two projects to be updated together. The
+avatar script is at **version 1.6** as of this work — it prints its version at
+startup, so the log says which one is running.
+
+**localhost, never the notebook's IP.** The audio server runs on the PC
+(`AUDIO_SERVER_HOST = "0.0.0.0"`, port 9000) and so does Godot.
+`192.168.1.154` in that script was left over from when the notebook did TTS;
+the only thing still at that address is RabbitMQ.
+
+**The export trap, which cost an evening.** Cubism model files are not Godot
+resources, so the exporter silently drops them and the runtime is handed
+nothing:
+
+```
+WARNING: [CSM][E]Failed to CubismMoc::Create().
+WARNING: [CSM][E]csmGetMocVersion: "address" is null.
+ERROR: Condition "this->is_initialized() == false" is true.
+```
+
+The model then never initialises, `get_parameters()` returns empty forever,
+and `_wait_for_model` spins — so the symptom is an invisible avatar in the
+export while the editor is fine, plus a thousand identical backtraces.
+
+Fix: **Export → Resources → "Filters to export non-resource files/folders"**
+
+```
+*.moc3, *.model3.json, *.physics3.json, *.cdi3.json, *.motion3.json,
+*.exp3.json, *.pose3.json, *.userdata3.json
+```
+
+Read the two `[CSM]` lines at the TOP of that log, not the error spam below
+it: they print before the script's own version line, which is what rules the
+script out as the cause.
+
 ---
 
 ## 3. Running it
@@ -180,6 +233,19 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
+- `python tests/test_promo.py` — 69 checks: every gate, the ask slot rolling
+  between the second and third game, that League ignores the clock and a
+  variety stream has nothing else to go on, the rotation, and that a session
+  gets exactly one ask and one end question
+- `python tests/test_ghost.py` — 15 checks: the fades around the utterance,
+  that nothing is sent when the flag is off, and that per-chunk visibility
+  never comes back
+- `python tests/test_stream_elements.py` — 75 checks: parsing including the
+  alternative spellings, the two-dollar threshold, blocked names and messages,
+  bits as a count, dedup across a restart, and that no alert can ever reach
+  the model
+- `python tests/test_join_logs.py` — 14 checks: the two files matching on
+  req_id, and each of the four readings against a fixture built to produce it
 - `python tests/test_temper.py` — 50 checks: the three registers, what moves
   them, that supportive cannot roast and negative cannot gush, and that the
   pointed-line streak is bounded
@@ -761,6 +827,22 @@ now carries a `req_id`, stamped into the request context, so the two records
 join exactly instead of by timestamp. Neither repo needs the other to work —
 only the join does.
 
+**One view over both halves** — `tools/join_logs.py`. `analyze_session.py` can
+say she repeated herself and name the angle; it cannot say whether that angle
+reached the model. Joined on `req_id`, the two files give a reading per repeat
+that is mechanical rather than a judgement: different angles with different
+seeds producing one sentence means the model ignored the direction; an angle
+missing from the prompt means plumbing; one seed for two answers means the
+server ignored the seed; her line differing from the raw output means a filter
+took the part that differed.
+
+The first version of that tool looked cluster members up **by their own
+text**, so two lines that repeated each other verbatim collapsed into one
+record and it reported "one seed for two answers" about two different seeds.
+Confidently wrong is worse than silent, so clusters now carry their member
+indices and every reading has a fixture built to produce it
+(`tests/test_join_logs.py`).
+
 The measurement moved to `orchestrator/session_metrics.py` when this landed.
 The app needs the same numbers as the CLI and must not import from `tools/`;
 two implementations of "what counts as a repeat" would disagree within a week.
@@ -813,6 +895,118 @@ Tone is deliberately **separate from the angle**. The angle says *what to talk
 about*, the tone says *how warm to be about it*, and multiplying them is where
 the variety lives — five tones across ~119 angles, rather than one fixed
 instruction per event type.
+
+### Two flags, both off by default
+
+`--league` and `--ghost`, turned on per run rather than argued out of — one
+shortcut per kind of stream, which is how the streamer actually launches her.
+
+**`--league` is not only about the game source.** It decides four things:
+whether the source polls at all, whether the promo waits for games, whether
+the notebook keeps the League part of her persona, and — stamped by the
+dispatcher onto every request, the same place the language is — what the
+notebook is told. Without the persona half the flag would be cosmetic: §7
+records that section as the gravity well pulling every other subject back to
+the game, so on a variety stream it is actively wrong rather than merely
+unused.
+
+The notebook strips `TEAMMATES:`, `LEAGUE OF LEGENDS:` and `CRITICAL GAME
+EVENT RULE:` by **heading**, over the blank-line block structure the file
+already has, so editing the prose inside a block cannot silently detach it
+from the list. A request with no flag keeps everything, which is what an older
+PC client gets.
+
+Both flags are written onto the `Settings` **class** at startup, not onto an
+instance: `get_settings()` builds a fresh object per call, so an instance
+would have been a copy that disagreed with the command line.
+
+**The sample rate is sent now, which was a bug.** `RATE:<int>` goes out with
+the first sentence of each utterance. Godot hardcoded 24000 in three places
+and the PC never told it the rate — but `TTSEngine.sample_rate` is read from
+the loaded model (`self.sample_rate = int(sr)`), so a backend or checkpoint at
+22050 or 48000 would have played her back at the wrong pitch with the lip sync
+drifting, and nothing in either log saying why. Godot keeps 24000 as its
+default, so an older PC build is unaffected.
+
+**`--ghost` is her avatar and nothing else.** `SHOW:100:200` before START,
+`SHOW:0:400` after END; Godot fades her alpha over those milliseconds. Nothing
+is sent when the flag is off, so a Godot build that has never heard of `SHOW`
+is unaffected.
+
+The spec was "0 when silent, 100 when making sound". Taken literally — alpha
+from the audio amplitude — she **strobes**: speech hits zero between
+syllables, several times a word. So visibility follows the *utterance* and
+`MOUTH` keeps carrying the per-chunk detail, with a slower fade out than in,
+because vanishing on the last syllable reads as a glitch where lingering reads
+as having finished. `tests/test_ghost.py` asserts `push_sentence` never sends
+`SHOW`, which is the "improvement" that would bring the strobe back.
+
+### Asking for a follow or a sub
+
+Her third alert responsibility. The first version had one set of rules with
+the game gates layered on top of a timer; the streamer's correction was that
+the two streams are governed differently **in kind**:
+
+**League is measured in games, and the clock does not apply at all** — an ask
+that arrives because an hour has passed can land in champion select or on a
+loading screen.
+
+| | |
+|---|---|
+| never during a game | he is playing; she is not interrupting |
+| 1–3 min after one ends | rolled per game; a fixed 90s becomes a tell |
+| **one ask per session** | after the 2nd or the 3rd game, rolled at startup |
+| after 4 games, **once** | she wonders aloud about the end instead of asking |
+
+A session is four or five games, so **one ask is the whole budget** — that is
+what "once per session" means. The slot is rolled between the second and the
+third game at startup rather than per check, so it is fixed for the evening
+and is not the same beat every night.
+
+An intermediate version counted "game credits", a game past thirty minutes
+being worth two so that one long game earned an ask on its own. It produced
+two asks in a two-long-game session, which is more than once per session
+whatever the arithmetic says. Gone, along with `PROMO_GAMES_GAP` and
+`PROMO_LONG_GAME_MINUTES`.
+
+Two consequences, both deliberate: **the end question outranks a missed ask**
+— on the fourth game a late advert is worse than none — and a **two-game
+session with a slot-3 ask gets nothing**, which is the honest cost of a
+one-ask budget rather than a bug to patch with a fallback.
+
+**The budget is spent where the line goes out**, in `fire`, not where the pool
+is chosen. A signal that failed to build would otherwise have burned the
+session's only ask with nobody hearing it — which a test caught rather than a
+stream.
+
+The wondering fires **once**, not on a coin flip. An observation about the
+evening repeated is a nag, and the arithmetic he gave — four games, an ask
+after the second, the end question after the fourth — only works if neither is
+a dice roll.
+
+**A variety stream has no games to count, so the clock is the whole rule**:
+once every 50–120 minutes, rolled fresh, three or four asks over five hours.
+
+Five lines per pool in `data/promo.json`, **rotated in order rather than
+picked at random**, so none can land twice in an evening — the same reason the
+alert placeholders rotate.
+
+**Spoken verbatim**, as quote signals: a call to action is the last thing to
+let a 9B model paraphrase, and five written lines cannot drift the way a
+generated one does.
+
+Priority 7 — under everything that matters, but *below*
+`VOICE_AMBIENT_PRIORITY`, so an ask is **held** while he is talking rather
+than discarded like idle filler, and expires after two minutes if he is still
+going.
+
+It learns that a game ended by **watching the temper's game count go up**
+rather than being told: temper already records one result per finished game,
+so there is no second opinion about when that happened and no new plumbing
+from the game source.
+
+`python tests/test_promo.py` — 69 checks.
+`python tests/test_ghost.py` — 15 checks.
 
 ### Temper — what kind of company she is tonight
 
@@ -1174,6 +1368,51 @@ a content one), and anything past 220 characters is cut on a word boundary.
 Every intervention is counted, like `persona/filters.py` — `name_blocked 2,
 message_blocked 5, truncated 3 of 40` is tunable where "that felt off" is not.
 
+### Where the money arrives — StreamElements
+
+The producer the sanitizer was waiting for. `sources/stream_elements.py` polls
+the activities feed and pushes **quote signals only**: a tip at or above
+`SE_TTS_MIN_AMOUNT` has its message read, below it she thanks them and stops,
+and subs, follows, cheers and raids get a rotated thank-you from
+`data/alert_lines.json`.
+
+**The token is read from the environment** (`RAVYN_SE_JWT`) and never stored
+in `settings.py` — this repo is public.
+
+**One part of this file is not verified.** The StreamElements documentation
+hosts did not resolve from the machine it was written on, so the endpoint path
+and the field names are *expected*. That uncertainty is confined to
+`_parse_activity`, which tries several spellings of each field and tolerates
+missing ones, and it is bounded three ways:
+
+- the **first payload of each type is logged verbatim**, so the first real tip
+  tells the truth
+- `--replay` runs parse → sanitise → compose offline against a saved payload,
+  so a corrected field name is checked in seconds rather than by waiting for a
+  donation
+- everything that is *ours* — composing, priorities, dedup, the two-dollar
+  threshold, the blocked-name fallback — has 75 checks that do not depend on
+  the payload shape being right
+
+**Polling rather than the realtime socket**, deliberately. Realtime is the
+better transport and instant where this is up to `SE_POLL_INTERVAL` late, but
+it needs a Socket.IO client dependency and the exact protocol version the
+service speaks — neither confirmable here, and a wrong guess there fails
+*silently* mid-stream where a wrong REST field name fails loudly in the log.
+Replacing `_fetch` swaps the transport and leaves everything below it.
+
+**A restart does not replay the evening.** The first sweep records every
+activity already inside the lookback window without speaking any of it.
+
+**Two live-behaviour bugs were caught by the fixtures rather than on stream.**
+A message cleaned down to debris — `"AAAAAAAAAAAAAAAA check
+twitch.tv/someoneelse"` becoming `"AA check"` — passed a letter count and
+would have been read out loud, so a message now has to keep 40% of its letters
+to still count as the message, measured against a comparably collapsed
+original (judging a de-duplicated message against its own padding fails every
+message that had padding). And bits were being priced in dollars: `"cheered
+$500"` where 500 is a count, not money.
+
 ### She finishes the sentence, then hands over the floor
 
 The order is TTS > alerts > commentary: `DONATION_PRIORITY = 1`,
@@ -1277,18 +1516,39 @@ champion tags are facts about the game. Different lifecycles.
 
 ## 8. Open
 
-**Untested**
+**Untested against a live stream** — all of this is written and tested against
+fixtures, and none of it has met a real viewer:
+
+- **StreamElements payload shapes.** The endpoint path and field names are
+  expected, not confirmed — their docs would not resolve from the machine this
+  was written on. The first payload of each type is logged verbatim and
+  `--replay` checks a correction offline, so this is a one-line fix when it is
+  wrong, not an investigation. **Watch this on the first real donation.**
+- **Ghost mode end to end.** The fades are asserted on the PC side; whether
+  `$Sprite2D.modulate.a` actually fades the Cubism render is a Godot question
+  nobody has answered yet. If it does not, point `avatar` at `self`.
+- **The promo gates**, over a real four or five game session.
+- **Temper**, over a real session: does the register move the way the evening
+  felt, and does `HEAT_FACTOR` make her too quiet at the negative end?
 - Russian output quality from the LLM — gates the whole RU plan
-- Official Qwen3.5-9B vs the abliterated build, A/B by ear
+- Official Qwen3.5-9B vs the abliterated build, A/B by ear. `start_llm.sh old`
+  is the baseline, and `history.csv` now makes the comparison a number rather
+  than an impression. **Worth doing before any more prompt work**: if the
+  model is the cause, prompt changes are wasted effort
 - Whether narration recurs on the official model (watch `Stripped narration ->`)
 
 **Not built**
 - ~~Wake word + STT~~ — **built**, `sources/voice_in.py`. No wake word: the
-  gate already does what it was for. **Untested against a real microphone**
-- A Russian addendum to her persona. `LANG_AMBIENT_RU_CHANCE` is on at 0.5, so
-  she speaks Russian now; the character does not survive the translation yet
-- Everything in §7
-- `ravyn-nb` has no PR
+  gate already does what it was for
+- **`git init` in the Godot project.** The avatar script exists in one place on
+  one machine with no history — see §2
+- A Russian addendum to her persona. `LANG_AMBIENT_RU_CHANCE` is **0.0** now,
+  so she does not speak Russian unbidden; `LANG_REPLY = "detect"` still answers
+  a Russian chatter in Russian, and that is the half where the character does
+  not survive the translation
+- Asking for a follow or a sub ~~is not designed~~ — **built**,
+  `sources/promo.py`
+- `ravyn-nb` has a branch but no PR
 
 **Small**
 - ~~Nothing bounds the share of a session spent at the top of the tone
@@ -1305,3 +1565,13 @@ champion tags are facts about the game. Different lifecycles.
   modulates her *voice*; it still drives her face
 - `[voice] Stream status: input overflow` under heavy CPU load — benign at
   startup, worth buffering if it recurs mid-stream
+- Her Godot script polls `get_parameters()` every frame until the model loads,
+  and GDCubism logs an error on each call — so a model that fails to load
+  produces a thousand identical backtraces instead of one sentence. A timeout
+  and a slower poll would make the next failure readable; see §2
+- `_wait_for_model` aside, three things in that script are dead: the two
+  branches of `first_chunk` are identical, the `MOUTH` arm builds
+  `open`/`form` values nothing reads (lip sync recomputes both), and
+  `mouth_interval` is derived and never used
+- The avatar pings the websocket **every frame** — 60 keepalives a second for
+  a connection that needs one

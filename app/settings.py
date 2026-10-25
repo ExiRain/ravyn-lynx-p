@@ -1,4 +1,14 @@
+import os
 from dataclasses import dataclass
+
+
+def _env(key: str, default: str = "") -> str:
+    """
+    Secrets come from the environment, never from this file — it is committed
+    to a public repo.
+    """
+    value = os.getenv(key)
+    return value if value not in (None, "") else default
 
 
 @dataclass
@@ -228,6 +238,7 @@ class Settings:
     #   1  a paid message read out loud (donation TTS), and the game-end cheer
     #   2  alerts — sub, follow, raid, bits — and his own voice
     #   3+ game commentary
+    #   7  asking for a follow or a sub
     #   10 idle filler
     #
     # The collisions at 1 and 2 are deliberate. A cheer is already one
@@ -238,6 +249,33 @@ class Settings:
     DONATION_PRIORITY = 1
     ALERT_PRIORITY = 2
 
+    # --- StreamElements (alerts and donations) ---
+    # The token is read from the environment and never stored here: this file
+    # is committed to a public repo.
+    #
+    #   PowerShell, this session only:   $env:RAVYN_SE_JWT = "..."
+    #   permanently:                     setx RAVYN_SE_JWT "..."
+    #
+    # From your StreamElements account settings (the JWT / API token for your
+    # channel). Without it the source says so once and does nothing — the rest
+    # of her carries on.
+    SE_JWT = _env("RAVYN_SE_JWT", "")
+
+    # Normally resolved from the token. Set it only if that call fails.
+    SE_CHANNEL_ID = _env("RAVYN_SE_CHANNEL", "")
+
+    # At or above this she READS THE MESSAGE out loud. Below it she thanks
+    # them and leaves the message alone — the streamer's rule, and the reason
+    # a two-dollar floor exists at all.
+    SE_TTS_MIN_AMOUNT = 2.0
+
+    SE_POLL_INTERVAL = 4.0          # seconds between checks
+    SE_LOOKBACK_MINUTES = 10        # how far back a poll looks
+
+    # A thank-you that arrives two minutes late is worse than none: the moment
+    # it belonged to is over and the viewer has gone.
+    SE_TTL = 90.0
+
     # She finishes the sentence she is on, then hands the floor over if
     # something more important arrived while she was talking. Checked between
     # sentences only: cutting her off mid-word to read a donation sounds worse
@@ -245,6 +283,80 @@ class Settings:
     #
     # Strictly more important — an alert does not interrupt another alert.
     PREEMPT_ENABLED = True
+
+    # --- Asking for a follow or a sub ---
+    # Her third alert responsibility. Quote signals — what is in
+    # data/promo.json is exactly what the stream hears.
+    PROMO_ENABLED = True
+
+    # --- NOT League: the clock, and nothing else ---
+    # There is no game to wait for on a variety stream, so the interval is the
+    # whole rule. Rolled fresh each time inside this range rather than fixed:
+    # a promo that arrives on the hour every hour is an advert, and an
+    # audience learns to stop hearing it.
+    #
+    # 50-120 minutes over a five-hour stream is three or four asks.
+    PROMO_MIN_INTERVAL = 50 * 60.0
+    PROMO_MAX_INTERVAL = 120 * 60.0
+
+    PROMO_TICK = 15.0                   # how often the gates are checked
+
+    # --- League: games, and NOT the clock ---
+    # A League stream is measured in games, not hours, so the interval above
+    # does not apply at all.
+    #
+    # ONE ask per session, after the 2nd or the 3rd game — which one is rolled
+    # at startup. A session is four or five games, so a single ask is the
+    # whole budget, and rolling between two slots keeps it from being the same
+    # beat every night.
+    PROMO_ASK_AFTER_GAMES = (2, 3)
+
+    # Not in the instant of defeat: the post-game screen, a minute or three
+    # later. Rolled per game — a fixed ninety seconds becomes a tell.
+    PROMO_AFTER_GAME_MIN = 60.0
+    PROMO_AFTER_GAME_MAX = 180.0
+
+    # After this many games she wonders aloud whether the stream is ending,
+    # instead of asking for anything. ONCE per session: it is an observation
+    # about the evening, and an observation repeated is a nag.
+    #
+    # It also takes precedence over a missed ask — if the ask never found a
+    # gap, the fourth game is the end question rather than a late advert.
+    PROMO_END_WONDER_AFTER = 4
+
+    # Under VOICE_AMBIENT_PRIORITY, so a promo is HELD while he is talking
+    # rather than discarded — but above everything that matters, so a
+    # donation, an alert, his voice and game commentary all come first.
+    PROMO_PRIORITY = 7
+
+    # An ask that waited out two minutes of him explaining something has
+    # missed its moment, and another is due within the hour.
+    PROMO_TTL = 120.0
+
+    # --- The two mode flags ---
+    # Both OFF by default and turned on per run, because that is how the
+    # shortcuts are written: one icon per kind of stream.
+    #
+    #   python -m app.main --league     he is playing League
+    #   python -m app.main --ghost      she is invisible until she speaks
+    #
+    # LEAGUE decides four things, not just whether the game source runs: the
+    # promo's game gates, and whether the notebook keeps the League part of
+    # her persona (without that she drags every subject back to a game nobody
+    # is playing — ravyn-lynx-p/STATUS.md §7).
+    LEAGUE_MODE = False
+
+    # GHOST is only about her avatar: she fades in when she speaks and fades
+    # out when she stops, so she is not sitting on top of something that
+    # matters. For a variety stream, where the screen is not a game anyone is
+    # reading. See services/audio_server.py.
+    GHOST_MODE = False
+
+    # The fades, in milliseconds. Driving alpha straight from the audio
+    # amplitude makes her strobe — speech hits zero between syllables — so
+    # visibility follows the utterance and MOUTH keeps carrying the detail.
+    GHOST_FADE_IN_MS = 200
+    GHOST_FADE_OUT_MS = 400
 
     # --- Language ---
     # Ambient: her own idle voice — silence filler, game reactions, promos.

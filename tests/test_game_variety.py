@@ -395,6 +395,9 @@ def test_cheer_and_boo():
     for won, label in ((True, "win"), (False, "loss")):
         queue = SignalQueue()
         source = LolGameSource(queue, data)
+        # Pinned to the harshest temper on purpose: that is where the heat
+        # factor used to eat the end-of-game line a quarter of the time.
+        source.temper.nudge = -10.0
         source._player_summoner, source._player_champion = "exiled", "Riven"
         source._current_game_time = 2100.0
         source._last_game_comment = source._current_game_time   # gap wide open
@@ -424,6 +427,8 @@ def test_cheer_and_boo():
 
         check(f"{label}: her actual line follows behind it",
               second is not None and second.context["event_type"] == "GameEnd")
+        check(f"{label}: and temper cannot silence it",
+              second is not None, "damped away by heat_factor")
         check(f"{label}: and that one does go through the LLM",
               not second.skip_llm)
         check(f"{label}: which knows the result",

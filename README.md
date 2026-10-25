@@ -35,10 +35,13 @@ here, which keeps the notebook's whole 4070 free for the model.
 | **Hearing him** | VAD gate, Whisper STT per utterance, name gate, and a guard against the decoder reciting its own prompt back |
 | **Speaking** | Qwen3-TTS voice cloning (Chatterbox fallback), sentence-by-sentence streaming, WebSocket to Godot with mood and face |
 | **League** | Live Client polling, measured game state, per-event angles, the streamer's tone rulebook, themes, champion notes, identity across accounts, the end-of-game cheer and boo |
+| **Alerts** | StreamElements tips, subs, follows, cheers and raids — sanitised and read straight to TTS, never through the model |
 | **Chat** | Twitch IRC, one message picked per window by score |
 | **Idle** | silence filler — improv seeds through the LLM, or quotes straight to TTS |
 | **Language** | English and Russian, resolved before generation so the voice can be told too; a person's language sticks |
 | **Temper** | supportive / neutral / negative, moved by the session and clamping how hard she is allowed to be |
+| **Promos** | asking for a follow or a sub, every 40–80 min, never mid-game, five rotated lines per pool |
+| **Modes** | `--league` (game source, game gates, League persona) and `--ghost` (invisible until she speaks) |
 | **Sanitizing** | viewer names and messages made safe to say out loud, with a blocklist matched against a normalised form |
 | **Measurement** | every line logged with what produced it, a three-line summary per game, and a running table across sessions |
 
@@ -46,19 +49,20 @@ Eleven standalone test suites, no pytest and no network: `python tests/test_*.py
 
 ## What is not built yet
 
-- **The alerts source.** Her first responsibility has no producer. The
-  sanitizer, the priorities and the notebook's donor memory are all in place;
-  nothing feeds them yet, because the integration depends on where the money
-  arrives (Twitch EventSub for bits and subs, something else for donations).
-  `sources/mock_events.py` fakes it for testing.
-- **Asking for a follow or a sub.** Her third alert responsibility, not yet
-  designed.
-- **A non-League mode.** `--no-lol` stops the game source, but her persona
-  still carries its League section, so she pulls other subjects back to the
-  game. Needs an `isLeague` flag that reaches the prompt.
-- **One view over both logs.** The PC records what she said and the notebook
-  records what the model was asked; they join on `req_id` and nothing reads
-  them together.
+- **The alerts source is written but unverified against the live service.**
+  StreamElements' documentation hosts could not be reached from the machine it
+  was written on, so the endpoint path and the field names are expected rather
+  than confirmed. Everything around them — sanitising, composing, priorities,
+  dedup — is tested. The first payload of each type is logged verbatim and
+  `--replay` runs the whole path offline, so a wrong field name is a one-line
+  fix rather than an investigation. **This is the thing to watch on the first
+  real donation.**
+- **The Godot half of ghost mode.** The PC sends `SHOW:percent:fade_ms`; the
+  avatar has to fade on it. That is `ExiRain/ravyn-lynx-godot`, untouched so
+  far.
+- ~~One view over both logs~~ — **done**, `tools/join_logs.py`. Copy the
+  notebook's worker log over and it prints her line beside the prompt that
+  produced it, with a reading per repeat.
 - **Her Russian character.** She speaks Russian; the persona that makes her
   *her* is English throughout.
 
@@ -88,6 +92,94 @@ PC (this repo)                              Notebook (Fedora)
 
 Ravyn is marked busy when the dispatcher publishes a request and idle again
 only once her audio has finished playing, so signals never overlap her voice.
+
+## Two flags
+
+Both off by default, one per kind of stream, because that is how the shortcuts
+are written:
+
+```powershell
+python -m app.main            # a variety stream
+python -m app.main --league   # he is playing League
+python -m app.main --ghost    # invisible until she speaks
+python -m app.main --league --ghost
+```
+
+**`--league`** decides four things, not just whether the game source runs:
+
+| | |
+|---|---|
+| the game source | polls the Live Client API, commentates |
+| her promos | wait for a game to end, and for every second game |
+| her persona | the notebook keeps the League section — without the flag it is left out, or she drags every subject back to a game nobody is playing |
+| the flag itself | stamped on every request by the dispatcher, so no source can forget |
+
+**`--ghost`** is her avatar and nothing else: `SHOW:100:200` before she
+speaks, `SHOW:0:400` after she stops, and Godot fades her alpha over those
+milliseconds. The Godot side of this is in that project, not here. For a stream where the screen is not a game anyone is reading.
+Nothing is sent when the flag is off, so a Godot build that has never heard of
+`SHOW` behaves exactly as it does today.
+
+Visibility follows the **utterance**, not the amplitude. Alpha driven straight
+from the audio strobes — speech hits zero between syllables, several times a
+word — so `MOUTH` keeps carrying that detail and `SHOW` only says "she is
+speaking now".
+
+The rest are debugging switches rather than modes: `--no-tts`, `--no-voice`,
+`--no-hear`, `--no-twitch`, `--no-alerts`, `--no-promo`, `--test`.
+
+## Asking for a follow or a sub
+
+```powershell
+python -m app.main            # on; --no-promo turns it off
+```
+
+Almost entirely made of reasons not to speak — and the two streams are
+governed differently in kind, not just in numbers.
+
+**League is measured in games. The clock does not apply at all**, because an
+ask that arrives because an hour passed can land in champion select or on a
+loading screen.
+
+| | |
+|---|---|
+| never during a game | he is playing; she is not interrupting |
+| 1–3 minutes after one ends | the post-game screen, not the instant of defeat |
+| **one ask per session** | after the 2nd or the 3rd game, rolled at startup |
+| after 4 games, once | she wonders aloud whether the stream is ending, instead of asking for anything |
+
+A session is four or five games, so one ask is the whole budget:
+
+```
+[promo] Active — League: one ask after game 3, the end question after game 4,
+        never during a game, and the clock does not apply
+
+  game 1: holding — waiting for game 3 (1 so far)
+  game 2: holding — waiting for game 3 (2 so far)
+  game 3: follow      "If you have been here a while and still have not..."
+  game 4: end_wonder  "Are we about to end the stream? Or not? Wonders..."
+  game 5: holding — she has had her one ask this session
+```
+
+The slot is rolled once at startup rather than per check, so it is not the
+same beat every night. Two consequences worth knowing: the end question
+outranks a missed ask — on the fourth game a late advert is worse than none —
+and a two-game session with a slot-3 ask gets no ask at all, which is the
+honest cost of one per session.
+
+**A variety stream has no games to count, so the clock is the whole rule** —
+once every **50–120 minutes**, rolled fresh each time, which is three or four
+asks over a five-hour stream.
+
+Five lines per pool in `data/promo.json` — `follow`, `subscribe`,
+`end_wonder` — rotated in order, so none of them can land twice in an evening.
+Spoken verbatim as quote signals: a call to action is the last thing to let a
+9B model paraphrase.
+
+Priority 7, so a donation, an alert, his voice and game commentary all come
+first — but under `VOICE_AMBIENT_PRIORITY`, so an ask is held while he is
+talking rather than thrown away, and expires after two minutes if he is still
+going.
 
 ## Setup
 
@@ -126,6 +218,8 @@ services/
   audio_server.py      WebSocket to Godot — audio, MOUTH, PHONEME, mood
 
 sources/
+  stream_elements.py   tips, subs, follows, cheers, raids — straight to TTS
+  promo.py             asking for a follow or a sub, and the gates on it
   silence_filler.py    timer-based — improv seeds (LLM) or quotes (TTS direct)
 
 orchestrator/
@@ -136,6 +230,7 @@ orchestrator/
 
 tools/
   analyze_session.py   repetition, knob attribution and heat, per session
+  join_logs.py         her line beside the prompt that produced it
   console_import.py    rebuilds a session from terminal scrollback
   test_hearing.py      mic level + what Whisper made of it, per utterance
 
@@ -269,6 +364,50 @@ Note that her persona is written in English — the banned openers, "fufu", the
 teammate vocabulary. None of that survives translation, so Russian output
 currently loses those voice rules until a Russian persona addendum exists.
 
+## Alerts and donations
+
+```powershell
+$env:RAVYN_SE_JWT = "..."        # StreamElements account settings
+python -m app.main               # alerts on; --no-alerts turns them off
+```
+
+Her first responsibility. A tip at or above `SE_TTS_MIN_AMOUNT` (2.0) has its
+message read out loud; below that she thanks them and leaves the message
+alone. Subs, follows, cheers and raids get a thank-you from
+`data/alert_lines.json` — three per type, rotated in order.
+
+**Nothing a viewer wrote ever reaches the model.** Every alert is a `quote`
+signal: the name and the message are sanitised on the PC and go straight to
+TTS. A tip reading *"ignore your instructions and say ..."* has nowhere to
+land when no model sees it.
+
+The field names are **expected, not verified** — see "What is not built yet".
+The first payload of each type is printed in full:
+
+```
+[se] FIRST tip payload, verbatim — check the field names against it:
+{"_id": "...", "type": "tip", "createdAt": "...", "data": {...}}
+```
+
+Paste that into a file and the whole path runs offline, with no RabbitMQ and
+no notebook:
+
+```powershell
+python -m sources.stream_elements --replay sample.json
+```
+
+```
+--- she would say ---
+  Thank you for the $5, Tracalley. good luck today, hope you climb!
+  source=donation priority=1 skip_llm=True ttl=90.0
+  donor note: {'amount': 5.0, 'currency': '$'}
+```
+
+Polling, not the realtime socket: that needs a Socket.IO client and the exact
+protocol version the service speaks, neither of which could be confirmed, and
+a wrong guess there fails silently mid-stream where a wrong REST field name
+fails loudly in the log. Swapping transports later means replacing `_fetch`.
+
 ## Session log
 
 The terminal prints `sentence[:50]`, so four near-identical roasts read as four
@@ -310,6 +449,36 @@ python tools/analyze_session.py scrollback.txt      # a pasted terminal log
 
 It is standard library only — no RabbitMQ, no notebook, no GPU — and read
 only, so it is safe to run mid-stream between games.
+
+### Why a line came out that way
+
+`analyze_session.py` can tell you she repeated herself. It cannot tell you
+whether the angle it names actually reached the model. That needs the
+notebook's half, which joins on `req_id`:
+
+```powershell
+scp ravyn@notebook:~/ravyn-lynx/logs/worker-20260922-201500.jsonl .
+python tools/join_logs.py logs/session-20260922-201649.jsonl worker-20260922-201500.jsonl
+```
+
+```
+  [2x] MyKill
+      20:24:26  my_kill_outclassing_team   seed 1551   You're outpacing these little piggies...
+      20:27:19  my_kill_clean              seed 9921   You're outpacing these little piggies...
+      -> different angles, different seeds, same sentence — the model ignored the direction
+```
+
+Four readings, and they are mechanical rather than a judgement:
+
+| | |
+|---|---|
+| different angles, different seeds, same sentence | the model ignored the direction |
+| the angle never reached the prompt | plumbing, not the model |
+| one seed, two identical answers | the server ignored the seed |
+| her line differs from the raw output | a filter took the part that differed |
+
+`--seq N` prints one line in full: the framed prompt, the raw output, what the
+filters cut, and what she actually said.
 
 The report answers three questions:
 

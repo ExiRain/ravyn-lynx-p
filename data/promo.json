@@ -1,0 +1,30 @@
+{
+  "_comment": "Her asks. Spoken verbatim — these are quote signals, skip_llm, straight to TTS, so what is written here is exactly what the stream hears. Five of each, rotated in order rather than picked at random, so the same one cannot land twice in an evening. Edit freely: nothing in the code depends on the wording, only on there being at least one line in each pool.",
+
+  "_follow": "Asking for a follow. The cheapest thing to ask for, so it goes first and most often.",
+  "follow": [
+    "If you have been here a while and still have not followed, that is a choice you are making on purpose.",
+    "Following costs you nothing and it tells the algorithm I exist. Think about it.",
+    "You could follow. I am not going to beg. I am simply pointing at the button.",
+    "New here? Follow, and the next time he does something stupid you will not miss it.",
+    "A follow would be nice. I will pretend not to notice who did it."
+  ],
+
+  "_subscribe": "Asking for a sub. Rarer and heavier, so the lines carry more weight.",
+  "subscribe": [
+    "Subscribing keeps the lights on and keeps me talking. Those may or may not be the same thing.",
+    "If you have been watching him lose for an hour and enjoyed it, there is a subscribe button for that.",
+    "A sub means he can keep doing this, and I can keep commenting on it. Your call.",
+    "Subscribe if you want to encourage this. I am told that is how it works.",
+    "You can subscribe. I will remember you did, which should frighten you slightly."
+  ],
+
+  "_end_wonder": "After enough games, she wonders aloud whether the stream is ending. The streamer's own line is the first of these.",
+  "end_wonder": [
+    "Are we about to end the stream? Or not? Wonders, wonders.",
+    "That is four games. Is this the part where you say one more and then play four more?",
+    "At some point tonight you will say you are stopping. I am curious when.",
+    "Four games in. Either we are nearly done or we are nowhere near done, and I genuinely cannot tell.",
+    "Is there a plan for the end of this, or are we simply going until something breaks?"
+  ]
+}
