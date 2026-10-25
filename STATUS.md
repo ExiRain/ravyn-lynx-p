@@ -67,6 +67,59 @@ The notebook publishes **exactly one** `ravyn.response` per request, including o
 empty output and failures. The PC clears its busy flag on that reply, so a
 dropped one stalls the dispatcher until the 90s watchdog fires.
 
+### Godot — the third machine, and the one with no git
+
+`ravyn-lynx-godot` has **no version control**, so the avatar script exists in
+exactly one place: `res://scripts/main.gd` on the streaming PC. A bad edit
+there has no way back. `git init` in that folder costs one command and is the
+single highest-value thing left on this list.
+
+What the PC sends it, all of it text over `ws://localhost:9000/ws/audio`:
+
+| | |
+|---|---|
+| `MOOD:float` / `TIRED:float` | per utterance, before START |
+| `SHOW:percent:fade_ms` | ghost mode only — before START and after END |
+| `START` / `END` | utterance boundaries |
+| `RATE:int` | the PCM sample rate, with the first sentence only |
+| `MOUTH:float` | lip sync envelope, per chunk |
+| `PHONEME:p:t` | phoneme timeline, per sentence |
+
+`SHOW` and `RATE` are additive: a build that ignores them behaves as it always
+did, which is why neither needs the two projects to be updated together. The
+avatar script is at **version 1.6** as of this work — it prints its version at
+startup, so the log says which one is running.
+
+**localhost, never the notebook's IP.** The audio server runs on the PC
+(`AUDIO_SERVER_HOST = "0.0.0.0"`, port 9000) and so does Godot.
+`192.168.1.154` in that script was left over from when the notebook did TTS;
+the only thing still at that address is RabbitMQ.
+
+**The export trap, which cost an evening.** Cubism model files are not Godot
+resources, so the exporter silently drops them and the runtime is handed
+nothing:
+
+```
+WARNING: [CSM][E]Failed to CubismMoc::Create().
+WARNING: [CSM][E]csmGetMocVersion: "address" is null.
+ERROR: Condition "this->is_initialized() == false" is true.
+```
+
+The model then never initialises, `get_parameters()` returns empty forever,
+and `_wait_for_model` spins — so the symptom is an invisible avatar in the
+export while the editor is fine, plus a thousand identical backtraces.
+
+Fix: **Export → Resources → "Filters to export non-resource files/folders"**
+
+```
+*.moc3, *.model3.json, *.physics3.json, *.cdi3.json, *.motion3.json,
+*.exp3.json, *.pose3.json, *.userdata3.json
+```
+
+Read the two `[CSM]` lines at the TOP of that log, not the error spam below
+it: they print before the script's own version line, which is what rules the
+script out as the cause.
+
 ---
 
 ## 3. Running it
@@ -1463,18 +1516,39 @@ champion tags are facts about the game. Different lifecycles.
 
 ## 8. Open
 
-**Untested**
+**Untested against a live stream** — all of this is written and tested against
+fixtures, and none of it has met a real viewer:
+
+- **StreamElements payload shapes.** The endpoint path and field names are
+  expected, not confirmed — their docs would not resolve from the machine this
+  was written on. The first payload of each type is logged verbatim and
+  `--replay` checks a correction offline, so this is a one-line fix when it is
+  wrong, not an investigation. **Watch this on the first real donation.**
+- **Ghost mode end to end.** The fades are asserted on the PC side; whether
+  `$Sprite2D.modulate.a` actually fades the Cubism render is a Godot question
+  nobody has answered yet. If it does not, point `avatar` at `self`.
+- **The promo gates**, over a real four or five game session.
+- **Temper**, over a real session: does the register move the way the evening
+  felt, and does `HEAT_FACTOR` make her too quiet at the negative end?
 - Russian output quality from the LLM — gates the whole RU plan
-- Official Qwen3.5-9B vs the abliterated build, A/B by ear
+- Official Qwen3.5-9B vs the abliterated build, A/B by ear. `start_llm.sh old`
+  is the baseline, and `history.csv` now makes the comparison a number rather
+  than an impression. **Worth doing before any more prompt work**: if the
+  model is the cause, prompt changes are wasted effort
 - Whether narration recurs on the official model (watch `Stripped narration ->`)
 
 **Not built**
 - ~~Wake word + STT~~ — **built**, `sources/voice_in.py`. No wake word: the
-  gate already does what it was for. **Untested against a real microphone**
-- A Russian addendum to her persona. `LANG_AMBIENT_RU_CHANCE` is on at 0.5, so
-  she speaks Russian now; the character does not survive the translation yet
-- Everything in §7
-- `ravyn-nb` has no PR
+  gate already does what it was for
+- **`git init` in the Godot project.** The avatar script exists in one place on
+  one machine with no history — see §2
+- A Russian addendum to her persona. `LANG_AMBIENT_RU_CHANCE` is **0.0** now,
+  so she does not speak Russian unbidden; `LANG_REPLY = "detect"` still answers
+  a Russian chatter in Russian, and that is the half where the character does
+  not survive the translation
+- Asking for a follow or a sub ~~is not designed~~ — **built**,
+  `sources/promo.py`
+- `ravyn-nb` has a branch but no PR
 
 **Small**
 - ~~Nothing bounds the share of a session spent at the top of the tone
@@ -1491,3 +1565,13 @@ champion tags are facts about the game. Different lifecycles.
   modulates her *voice*; it still drives her face
 - `[voice] Stream status: input overflow` under heavy CPU load — benign at
   startup, worth buffering if it recurs mid-stream
+- Her Godot script polls `get_parameters()` every frame until the model loads,
+  and GDCubism logs an error on each call — so a model that fails to load
+  produces a thousand identical backtraces instead of one sentence. A timeout
+  and a slower poll would make the next failure readable; see §2
+- `_wait_for_model` aside, three things in that script are dead: the two
+  branches of `first_chunk` are identical, the `MOUTH` arm builds
+  `open`/`form` values nothing reads (lip sync recomputes both), and
+  `mouth_interval` is derived and never used
+- The avatar pings the websocket **every frame** — 60 keepalives a second for
+  a connection that needs one
