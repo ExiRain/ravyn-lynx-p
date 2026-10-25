@@ -289,6 +289,121 @@ def _attribution_cases(src, pushed):
           pushed[-1].text if pushed else "nothing pushed")
 
 
+def test_every_game_is_counted():
+    """
+    The 2026-10-25 session: three GameStarts, one GameEnd. Two games ended
+    with the API simply going away, were never recorded, and promo — which
+    counts recorded games — sat at "waiting for game 2" all night. Its
+    game_active flag was also only refreshed on a dispatch, and a game that
+    ends with no GameEnd dispatches nothing, so it stayed "a game is running"
+    between games as well.
+    """
+    print("\n--- every game counts, however it ends ---")
+    import time
+    from app.settings import Settings
+    from orchestrator.temper import Temper
+    from sources.promo import PromoSource
+
+    league_before = Settings.LEAGUE_MODE
+    Settings.LEAGUE_MODE = True
+    try:
+        temper = Temper()
+        src = LolGameSource(SignalQueue(), DATA, temper=temper)
+        promo = PromoSource(SignalQueue(), DATA, temper=temper)
+        promo._ask_after = 2
+        flips = []
+        src.on_active_change.append(lambda a: flips.append(a))
+        src.on_active_change.append(
+            lambda a: setattr(promo, "game_active", a))
+
+        def play_and_vanish():
+            src._fetch = real_game
+            src._check_for_game()
+            src._fetch = lambda: None
+            src._poll_game()
+
+        play_and_vanish()
+        check("a game whose API vanished is counted", len(temper.games) == 1,
+              str(len(temper.games)))
+        check("and its result is unknown, not guessed",
+              temper.games[0].won is None, str(temper.games[0].won))
+        check("which reads as '?' rather than W or L",
+              temper.games[0].summary().startswith("?"),
+              temper.games[0].summary())
+        check("listeners heard it start and end", flips == [True, False],
+              str(flips))
+        check("promo no longer thinks a game is running",
+              promo.game_active is False)
+
+        play_and_vanish()
+        check("the second one is counted too", len(temper.games) == 2,
+              str(len(temper.games)))
+
+        now = time.time()
+        promo._watch_games()
+        blocked = promo._blocked(now)
+        check("straight after game 2 she still waits out the post-game delay",
+              "since the game ended" in blocked, blocked)
+        check("and asks once 1-3 minutes have passed",
+              promo._blocked(now + 181) == "", promo._blocked(now + 181))
+
+        # A game whose GameEnd WAS read must not be counted again when the
+        # API goes away a moment later.
+        src._fetch = real_game
+        src._check_for_game()
+        src._handle_event({"EventName": "GameEnd", "Result": "Win"},
+                          real_game())
+        src._fetch = lambda: None
+        src._poll_game()
+        check("a GameEnd followed by the API vanishing counts once",
+              len(temper.games) == 3, str(len(temper.games)))
+        check("and keeps the result it was given",
+              temper.games[-1].won is True)
+    finally:
+        Settings.LEAGUE_MODE = league_before
+
+
+def test_notes_only_reach_note_angles():
+    """
+    His champion notes were attached to every game event, so the model quoted
+    them on kills, deaths and dragons: "mid is where you mess around" 12 times
+    in the 2026-10-25 session, its biggest single repeat. STATUS.md §7 says
+    five angles read the file; only those get the text now.
+    """
+    print("\n--- his notes reach only the angles that are about them ---")
+    import sources.lol_game as lol
+    from orchestrator.game_angles import NOTE_ANGLES
+
+    src = source()
+    src._fetch = real_game
+    src._check_for_game()
+
+    pushed = []
+    src.queue.push = lambda sig: pushed.append(sig)
+    original = lol.random.random
+    lol.random.random = lambda: 0.0
+    try:
+        src._current_game_time = 100.0
+        src._push_event("GameStart", "Game started.", {}, "GameStart")
+        for i, kind in enumerate(["Infernal", "Ocean", "Cloud", "Mountain"]):
+            src._current_game_time = 1500.0 + i * 200
+            src._handle_dragon({"DragonType": kind, "KillerName": "leesin#RU",
+                                "EventTime": src._current_game_time})
+    finally:
+        lol.random.random = original
+
+    start = pushed[0].context if pushed else {}
+    check("the opener is a note angle when he wrote a note",
+          start.get("angle_id") in NOTE_ANGLES, start.get("angle_id"))
+    check("and the opener carries his notes", "player_notes" in start)
+
+    rest = [s.context for s in pushed[1:]]
+    check("the later events were pushed", len(rest) >= 3, str(len(rest)))
+    leaked = [c.get("angle_id") for c in rest
+              if "player_notes" in c and c.get("angle_id") not in NOTE_ANGLES]
+    check("no other angle is handed his notes", not leaked, str(leaked))
+
+
 def main():
     test_loading_screen_is_not_a_game()
     test_identity_resolves_when_ready()
@@ -296,6 +411,8 @@ def main():
     test_unknown_side_records_nothing()
     test_who_did_what()
     test_objective_attribution_in_events()
+    test_every_game_is_counted()
+    test_notes_only_reach_note_angles()
 
     print()
     if FAILURES:

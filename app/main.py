@@ -209,16 +209,17 @@ def main():
         from sources.lol_game import LolGameSource
         lol = LolGameSource(queue, DATA_DIR, identity=identity, temper=temper)
 
-        def _sync_game(signal):
-            if lol:
-                # Both of them hold off while a game is live, for different
-                # reasons: the filler has nothing to fill, and a promo would
-                # be talking over the thing people came to watch.
-                silence.game_active = lol.is_game_active
-                if promo:
-                    promo.game_active = lol.is_game_active
+        def _sync_game(active: bool) -> None:
+            # Both of them hold off while a game is live, for different
+            # reasons: the filler has nothing to fill, and a promo would be
+            # talking over the thing people came to watch. Pushed the moment
+            # the game source flips, not on the next dispatch — a game that
+            # ends with no GameEnd event dispatches nothing at all.
+            silence.game_active = active
+            if promo:
+                promo.game_active = active
 
-        dispatcher.on_dispatch(_sync_game)
+        lol.on_active_change.append(_sync_game)
         Thread(target=lol.run, daemon=True, name="lol-game").start()
 
     # --- Alerts and donations (StreamElements) ---
@@ -255,14 +256,17 @@ def main():
                   "server) — drop --no-tts to use it")
         else:
             from services.audio_server import (register_alert_injector,
-                                               register_promo_injector)
+                                               register_promo_injector,
+                                               register_sanitizer)
             hooked = []
             if alerts is not None:
                 register_alert_injector(alerts._handle)
-                hooked.append("follow/sub/tip/cheer/raid")
+                register_sanitizer(alerts.sanitizer)
+                hooked.append("follow/sub/tip/cheer/raid/sanitizer-check")
             if promo is not None:
+                # spend=False: a test must never use up the real ask.
                 register_promo_injector(
-                    fire=promo.fire,
+                    fire=lambda pool: promo.fire(pool, spend=False),
                     status=lambda: promo._blocked(time.time()))
                 hooked.append("promo")
             if hooked:

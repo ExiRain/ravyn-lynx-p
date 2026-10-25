@@ -19,10 +19,15 @@ react to one before the next starts:
     tip at/above SE_TTS_MIN_AMOUNT  (good — message read aloud)
     cheer                           (good)
     raid                            (good)
+    sanitizer check                 (bad — fires a real entry from YOUR
+                                     data/blocklist.json through the live
+                                     sanitizer, in a name and in a message,
+                                     and confirms both get caught. The term
+                                     itself is never printed anywhere.)
     promo status                    (shows why she would/would not ask right
                                      now, from the REAL gate — not forced)
-    promo: force a follow ask       (good — gates ignored, PromoSource.fire)
-    promo: force a subscribe ask    (good — gates ignored, PromoSource.fire)
+    promo: force a follow ask       (good — gates ignored, and the real
+    promo: force a subscribe ask     once-per-session ask is NOT spent)
 
 Pass --bad-name and/or --bad-message to also fire one extra tip with content
 you expect your blocklist to catch, to confirm the sanitizer replaces it with
@@ -99,6 +104,8 @@ def main() -> int:
          _activity("cheer", "test_cheerer", amount=500))),
         ("raid", lambda: _post(args.port, "/debug/alert",
          _activity("raid", "test_raider", amount=12))),
+        ("sanitizer check (real entry from your blocklist.json, "
+         "never printed)", lambda: _get(args.port, "/debug/sanitizer-check")),
     ]
 
     if args.bad_name:
@@ -138,7 +145,20 @@ def main() -> int:
             print("    Is it running with --debug-alerts (and TTS enabled)?")
             return 1
         else:
-            if "blocked" in result:        # /debug/promo/status
+            if "checked" in result:        # /debug/sanitizer-check
+                if not result["checked"]:
+                    print(f"    SKIPPED — {result['reason']}")
+                    failures += 1
+                else:
+                    name_ok = result["name_blocked"]
+                    msg_ok = result["message_blocked"]
+                    print(f"    name catch: {'PASS' if name_ok else 'FAIL'}  "
+                          f"message catch: {'PASS' if msg_ok else 'FAIL'}  "
+                          f"(1 of {result['entries_in_blocklist']} "
+                          f"blocklist entries, never printed)")
+                    if not (name_ok and msg_ok):
+                        failures += 1
+            elif "blocked" in result:      # /debug/promo/status
                 state = "BLOCKED" if result["blocked"] else "clear to ask"
                 print(f"    {state}"
                       + (f" — {result['reason']}" if result["reason"] else ""))
