@@ -894,19 +894,29 @@ loading screen.
 |---|---|
 | never during a game | he is playing; she is not interrupting |
 | 1–3 min after one ends | rolled per game; a fixed 90s becomes a tell |
-| two games' **worth** | a game past `PROMO_LONG_GAME_MINUTES` (30) counts double |
+| **one ask per session** | after the 2nd or the 3rd game, rolled at startup |
 | after 4 games, **once** | she wonders aloud about the end instead of asking |
 
-"Worth" rather than "games" is his point: *"if game was 40 mins then 1-3 mins
-after that we can do promo"*. Two short games earn an ask; one long game earns
-it on its own. Credits are counted since the last ask, not for the session.
+A session is four or five games, so **one ask is the whole budget** — that is
+what "once per session" means. The slot is rolled between the second and the
+third game at startup rather than per check, so it is fixed for the evening
+and is not the same beat every night.
 
-Four short games — his normal day — produces exactly one ask and one
-wondering, which is what he meant by once per session. Two long games produce
-one ask each, about forty minutes apart, which is the same rate the variety
-rule gives. **No minimum-gap setting was needed**: after an ask the next needs
-two credits again, and the cheapest route to two is a 30-minute game, so the
-floor is a consequence of the rule rather than another knob.
+An intermediate version counted "game credits", a game past thirty minutes
+being worth two so that one long game earned an ask on its own. It produced
+two asks in a two-long-game session, which is more than once per session
+whatever the arithmetic says. Gone, along with `PROMO_GAMES_GAP` and
+`PROMO_LONG_GAME_MINUTES`.
+
+Two consequences, both deliberate: **the end question outranks a missed ask**
+— on the fourth game a late advert is worse than none — and a **two-game
+session with a slot-3 ask gets nothing**, which is the honest cost of a
+one-ask budget rather than a bug to patch with a fallback.
+
+**The budget is spent where the line goes out**, in `fire`, not where the pool
+is chosen. A signal that failed to build would otherwise have burned the
+session's only ask with nobody hearing it — which a test caught rather than a
+stream.
 
 The wondering fires **once**, not on a coin flip. An observation about the
 evening repeated is a nag, and the arithmetic he gave — four games, an ask

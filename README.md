@@ -145,21 +145,27 @@ loading screen.
 |---|---|
 | never during a game | he is playing; she is not interrupting |
 | 1–3 minutes after one ends | the post-game screen, not the instant of defeat |
-| two games' worth | a game past 30 minutes counts **double**, so two short games earn an ask and one long game earns it alone |
+| **one ask per session** | after the 2nd or the 3rd game, rolled at startup |
 | after 4 games, once | she wonders aloud whether the stream is ending, instead of asking for anything |
 
-Four short games — a normal day — produces exactly one ask and one wondering:
+A session is four or five games, so one ask is the whole budget:
 
 ```
-  game 1 (22 min): holding — only 1 game credit(s) since the last ask
-  game 2 (24 min): follow      If you have been here a while and still have not...
-  game 3 (19 min): holding — only 1 game credit(s) since the last ask
-  game 4 (27 min): end_wonder  Are we about to end the stream? Or not? Wonders...
+[promo] Active — League: one ask after game 3, the end question after game 4,
+        never during a game, and the clock does not apply
+
+  game 1: holding — waiting for game 3 (1 so far)
+  game 2: holding — waiting for game 3 (2 so far)
+  game 3: follow      "If you have been here a while and still have not..."
+  game 4: end_wonder  "Are we about to end the stream? Or not? Wonders..."
+  game 5: holding — she has had her one ask this session
 ```
 
-Two asks cannot land close together: after one, the next needs two credits
-again, and the cheapest way to get them is a 30-minute game. The floor is
-built in rather than being another setting.
+The slot is rolled once at startup rather than per check, so it is not the
+same beat every night. Two consequences worth knowing: the end question
+outranks a missed ask — on the fourth game a late advert is worse than none —
+and a two-game session with a slot-3 ask gets no ask at all, which is the
+honest cost of one per session.
 
 **A variety stream has no games to count, so the clock is the whole rule** —
 once every **50–120 minutes**, rolled fresh each time, which is three or four
