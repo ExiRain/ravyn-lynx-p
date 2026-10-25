@@ -180,8 +180,10 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
-- `python tests/test_promo.py` — 64 checks. every gate, the rotation, and
-  that outside League only the clock applies
+- `python tests/test_promo.py` — 64 checks: every gate, game credits with a
+  long game counting double, that League ignores the clock and a variety
+  stream has nothing else to go on, the rotation, and that four games produce
+  one ask and one wondering
 - `python tests/test_ghost.py` — 15 checks: the fades around the utterance,
   that nothing is sent when the flag is off, and that per-chunk visibility
   never comes back
