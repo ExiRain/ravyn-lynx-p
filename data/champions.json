@@ -67,9 +67,7 @@
   },
   "champions": {
     "Riven": {
-      "main_role": "top",
       "history": "I'm relearning how to actually win on her again, not just take fights to take them",
-      "offrole_read": "PLACEHOLDER — still learning her anywhere but top",
       "matchups": {
         "Garen": "PLACEHOLDER — never wins this lane, takes the fight anyway"
       },
@@ -78,11 +76,9 @@
       ]
     },
     "Ashe": {
-      "main_role": "bottom",
       "history": "I'm genuinely tryharding on her right now — actually focused instead of coasting"
     },
     "Katarina": {
-      "main_role": "middle",
       "history": "I know she's a bad pick if you actually want to climb, and I play her anyway"
     },
     "Garen": {
