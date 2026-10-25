@@ -165,6 +165,27 @@ def test_firing_resets_the_clock():
     restore()
 
 
+def test_a_test_fire_spends_nothing():
+    """
+    On 2026-10-25 testBat1 forced two asks through --debug-alerts before
+    game 1, and that spent the session's only ask for real.
+    """
+    print("\n--- a test fire leaves the session exactly as it was ---")
+    p = source(games=0)
+    due, nxt, turn = p._due, p._next_ask, dict(p._turn)
+
+    a = p.fire(FOLLOW, spend=False)
+    b = p.fire(SUBSCRIBE, spend=False)
+    check("both test asks were spoken",
+          a is not None and b is not None and p.queue.size() == 2)
+    check("the real ask is not spent", p._asked is False)
+    check("the end question is not spent", p._wondered is False)
+    check("the clock is untouched", p._due == due)
+    check("which ask comes next is untouched", p._next_ask == nxt)
+    check("the line rotation is untouched", p._turn == turn, str(p._turn))
+    restore()
+
+
 # ====================================================================== gates
 def test_not_during_a_game():
     print("\n--- never while he is playing ---")
@@ -469,6 +490,7 @@ def main() -> int:
     test_the_clock_is_a_variety_stream_rule()
     test_league_ignores_the_clock_entirely()
     test_firing_resets_the_clock()
+    test_a_test_fire_spends_nothing()
     test_not_during_a_game()
     test_the_wait_after_a_game()
     test_one_ask_after_game_two_or_three()

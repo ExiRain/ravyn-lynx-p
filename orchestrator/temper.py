@@ -135,7 +135,9 @@ POINTS_LIMIT = 10.0
 @dataclass
 class GameResult:
     """One finished game, as temper cares about it."""
-    won: bool
+    # None when the API went away before its GameEnd event was read: the game
+    # still happened and still counts, but nobody established who won.
+    won: bool | None
     kills: int = 0
     deaths: int = 0
     assists: int = 0
@@ -148,7 +150,8 @@ class GameResult:
         return (self.kills + self.assists / 2.0) / max(1, self.deaths)
 
     def points(self) -> float:
-        total = WIN_POINTS if self.won else LOSS_POINTS
+        total = (0.0 if self.won is None
+                 else WIN_POINTS if self.won else LOSS_POINTS)
         if self.kda >= KDA_GOOD:
             total += KDA_POINTS
         elif self.kda <= KDA_BAD:
@@ -156,7 +159,8 @@ class GameResult:
         return total
 
     def summary(self) -> str:
-        return (f"{'W' if self.won else 'L'} "
+        result = "?" if self.won is None else "W" if self.won else "L"
+        return (f"{result} "
                 f"{self.kills}/{self.deaths}/{self.assists}"
                 + (f" as {self.champion}" if self.champion else ""))
 

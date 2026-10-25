@@ -219,8 +219,26 @@ class PromoSource:
                      "games": self._games_seen},
         )
 
-    def fire(self, pool: str | None = None) -> Signal | None:
-        """Push one now, gates ignored. The timer resets as if it had fired."""
+    def fire(self, pool: str | None = None,
+             spend: bool = True) -> Signal | None:
+        """
+        Push one now, gates ignored. The timer resets as if it had fired.
+
+        spend=False is the --debug-alerts route: she says it, and the session
+        is left exactly as it was — no ask spent, no clock reset, no change to
+        which ask is next. A test on the live app used to spend the real
+        once-per-session ask, so the 2026-10-25 games could never get one.
+        """
+        if not spend:
+            rotation = dict(self._turn)
+            signal = self.build(pool or self._next_ask)
+            self._turn = rotation
+            if signal is not None:
+                self.queue.push(signal)
+                print(f"[promo] TEST {signal.context['promo']}: "
+                      f"{signal.text[:70]} (budget untouched)")
+            return signal
+
         signal = self.build(pool or self._pool())
         if signal is None:
             return None

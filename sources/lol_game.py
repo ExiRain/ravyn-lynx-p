@@ -89,8 +89,15 @@ class LolGameSource:
         self._running = True
         self._last_event_index = 0
         self._game_active = False
+        self._game_recorded = False
         self._game_start_pushed = False
         self._current_game_time = 0.0
+
+        # Told the instant a game starts or ends. Promo and the silence filler
+        # used to learn it only when a line was dispatched, so a game that
+        # ended without a GameEnd event (nothing dispatched) left both of
+        # them believing a game was still running until the next one began.
+        self.on_active_change: list = []
 
         # player identity
         self._player_summoner = ""
@@ -158,6 +165,28 @@ class LolGameSource:
     @property
     def is_game_active(self) -> bool:
         return self._game_active
+
+    def _set_game_active(self, active: bool) -> None:
+        self._game_active = active
+        for callback in self.on_active_change:
+            try:
+                callback(active)
+            except Exception as e:
+                print(f"[lol] on_active_change callback failed: {e}")
+
+    def _record_game(self, won: bool | None) -> None:
+        """Once per game, whichever way it ends — promo counts these."""
+        if self._game_recorded:
+            return
+        self._game_recorded = True
+        self.temper.record_game(temper_engine.GameResult(
+            won=won,
+            kills=self.state.kills,
+            deaths=self.state.deaths,
+            assists=self.state.assists,
+            minutes=self.state.minutes,
+            champion=self.state.champion or self._player_champion or "",
+        ))
 
     def _load_quotes(self, path: Path) -> dict:
         if not path.exists():
@@ -264,7 +293,8 @@ class LolGameSource:
             return
 
         self._waiting_logged = False
-        self._game_active = True
+        self._game_recorded = False
+        self._set_game_active(True)
         self._game_start_pushed = False
         self._last_event_index = 0
         self._recent_kills = []
@@ -546,7 +576,16 @@ class LolGameSource:
         if data is None:
             if self._game_active:
                 print("[lol] Game no longer active")
-                self._game_active = False
+                # The API often goes away before its GameEnd event is read —
+                # in the 2026-10-25 session two of three games ended this way
+                # and were never counted, so promo never reached "after game
+                # 2 or 3". The game still happened; who won is unknown, and
+                # is recorded as unknown rather than guessed.
+                if not self._game_recorded:
+                    print("[lol] Ended without a GameEnd event — counted, "
+                          "result unknown")
+                    self._record_game(None)
+                self._set_game_active(False)
                 # Her reaction to the last death is usually still being
                 # spoken when the API goes away — the game ends mid-sentence.
                 # Summarising now would miss it, so the summary waits for her
@@ -613,20 +652,13 @@ class LolGameSource:
 
             # Before the signal goes out, so her line about the game is
             # framed by the temper this game just produced.
-            self.temper.record_game(temper_engine.GameResult(
-                won=won,
-                kills=self.state.kills,
-                deaths=self.state.deaths,
-                assists=self.state.assists,
-                minutes=self.state.minutes,
-                champion=self.state.champion or self._player_champion or "",
-            ))
+            self._record_game(won)
 
             seed = self._pick_quote("game_state",
                                     "game_win" if won else "game_loss")
             self._push_event("GameEnd", seed or "Game over.", event, "GameEnd",
                              extra_context={"won": won})
-            self._game_active = False
+            self._set_game_active(False)
             return
 
         if name == "ChampionKill":

@@ -26,8 +26,8 @@ react to one before the next starts:
                                      itself is never printed anywhere.)
     promo status                    (shows why she would/would not ask right
                                      now, from the REAL gate — not forced)
-    promo: force a follow ask       (good — gates ignored, PromoSource.fire)
-    promo: force a subscribe ask    (good — gates ignored, PromoSource.fire)
+    promo: force a follow ask       (good — gates ignored, and the real
+    promo: force a subscribe ask     once-per-session ask is NOT spent)
 
 Pass --bad-name and/or --bad-message to also fire one extra tip with content
 you expect your blocklist to catch, to confirm the sanitizer replaces it with
