@@ -79,7 +79,7 @@ What the PC sends it, all of it text over `ws://localhost:9000/ws/audio`:
 | | |
 |---|---|
 | `MOOD:float` / `TIRED:float` | per utterance, before START |
-| `SHOW:percent:fade_ms` | ghost mode only — `SHOW:0:0` on connect, before START, and once playback has finished (not at END) |
+| `SHOW:percent:fade_ms` | ghost mode only — her current state on connect, before START (unless still up), and a second after playback has finished (not at END) |
 | `START` / `END` | utterance boundaries |
 | `RATE:int` | the PCM sample rate, with the first sentence only |
 | `MOUTH:float` | lip sync envelope, per chunk |
@@ -928,9 +928,11 @@ the loaded model (`self.sample_rate = int(sr)`), so a backend or checkpoint at
 drifting, and nothing in either log saying why. Godot keeps 24000 as its
 default, so an older PC build is unaffected.
 
-**`--ghost` is her avatar and nothing else.** `SHOW:0:0` when Godot connects,
-`SHOW:100:200` before START, `SHOW:0:400` once her audio has finished
-*playing*; Godot fades her alpha over those milliseconds. Nothing is sent when
+**`--ghost` is her avatar and nothing else.** Her current state when Godot
+connects, `SHOW:100:200` before START, `SHOW:0:400` `GHOST_LINGER_S` (1s) after
+her audio has finished *playing* — cancelled if her next line starts first, so
+back-to-back lines keep her up instead of blinking; Godot fades her alpha over
+those milliseconds. Nothing is sent when
 the flag is off, so a Godot build that has never heard of `SHOW` is
 unaffected.
 
@@ -940,6 +942,14 @@ twelve-second line was sent in about three and she faded out with nine seconds
 left to say — a one-sentence line faded out milliseconds after fading in. On
 the first ghost session (2026-10-25) she was effectively never visible. The
 response listener now sends it after its playback wait, in a `finally`.
+
+**The playback wait itself was wrong too.** It assumed Godot plays sentences
+back to back: first audio + summed durations. But a sentence that takes longer
+to synthesise than the last one took to play leaves a silence — 35 of 120
+sentence boundaries in the 15:06 session, up to 2.7s — so she still faded out
+before her last sentence. The listener now tracks when each sentence can
+actually start (`max(previous end, arrival)`), and the linger covers Godot's
+own buffering, which the PC cannot see.
 
 The spec was "0 when silent, 100 when making sound". Taken literally — alpha
 from the audio amplitude — she **strobes**: speech hits zero between

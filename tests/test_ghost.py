@@ -125,26 +125,49 @@ class FakeGodot:
         self.sent.append(f"<{len(data)} bytes>")
 
 
-def utterance(ghost: bool) -> list:
-    """One begin/end pair with ghost mode on or off, and what Godot saw."""
+LINGER = 0.05      # GHOST_LINGER_S for these tests, so they stay fast
+
+
+def fresh_ghost_state() -> None:
+    audio_server._visible = False
+    audio_server._fade_task = None
+
+
+def godot_sees(ghost: bool, script) -> list:
+    """Run `script` (an async callable) and return what Godot was sent."""
     Settings.GHOST_MODE = ghost
+    saved_linger = Settings.GHOST_LINGER_S
+    Settings.GHOST_LINGER_S = LINGER
+    fresh_ghost_state()
     client = FakeGodot()
     audio_server.clients.clear()
     audio_server.clients.add(client)
     try:
-        asyncio.run(_run())
+        asyncio.run(script())
     finally:
         audio_server.clients.discard(client)
         Settings.GHOST_MODE = False
+        Settings.GHOST_LINGER_S = saved_linger
+        fresh_ghost_state()
     return client.sent
 
 
-async def _run() -> None:
+async def _line() -> None:
     # The response listener's order: fade_out comes after its playback wait,
     # which tests/test_voice_gate.py times; here only the messages matter.
     await audio_server.begin_utterance(mood=0.2, tired=0.1)
     await audio_server.end_utterance()
     await audio_server.fade_out()
+
+
+async def _run() -> None:
+    await _line()
+    await asyncio.sleep(LINGER * 3)     # let the scheduled fade out fire
+
+
+def utterance(ghost: bool) -> list:
+    """One line with ghost mode on or off, and what Godot saw."""
+    return godot_sees(ghost, _run)
 
 
 # ===================================================================== on/off
@@ -182,7 +205,7 @@ def test_she_fades_in_and_out():
 
 
 def test_she_starts_hidden():
-    print("\n--- hidden from the moment Godot connects ---")
+    print("\n--- a connecting Godot is told her state right now ---")
     WSD = sys.modules["fastapi"].WebSocketDisconnect
 
     class FakeSocket(FakeGodot):
@@ -192,19 +215,61 @@ def test_she_starts_hidden():
         async def receive_text(self):
             raise WSD()
 
-    def connect(ghost: bool) -> list:
+    def connect(ghost: bool, visible: bool = False) -> list:
         Settings.GHOST_MODE = ghost
+        audio_server._visible = visible
         sock = FakeSocket()
         try:
             asyncio.run(audio_server.websocket_endpoint(sock))
         finally:
             Settings.GHOST_MODE = False
+            fresh_ghost_state()
         return sock.sent
 
     check("ghost mode hides her instantly on connect",
           connect(True) == ["SHOW:0:0"], str(connect(True)))
+    check("but a reconnect mid-line shows her, instead of blanking her "
+          "while she talks",
+          connect(True, visible=True) == ["SHOW:100:0"],
+          str(connect(True, visible=True)))
     check("and nothing is sent when ghost mode is off",
           connect(False) == [], str(connect(False)))
+
+
+def test_back_to_back_lines_do_not_flicker():
+    print("\n--- a line inside the linger keeps her up ---")
+
+    async def two_lines_close():
+        await _line()
+        await _line()                      # starts inside the first linger
+        await asyncio.sleep(LINGER * 3)
+
+    sent = godot_sees(True, two_lines_close)
+    shows = [m for m in sent if m.startswith("SHOW")]
+    check("one fade in and one fade out across both lines — no out-and-in",
+          shows == [f"SHOW:100:{S.GHOST_FADE_IN_MS}",
+                    f"SHOW:0:{S.GHOST_FADE_OUT_MS}"], str(shows))
+    check("the fade out comes after the second line's END",
+          sent[-2:] == ["END", f"SHOW:0:{S.GHOST_FADE_OUT_MS}"], str(sent))
+
+    async def two_lines_apart():
+        await _line()
+        await asyncio.sleep(LINGER * 3)    # the first fade out fires
+        await _line()
+        await asyncio.sleep(LINGER * 3)
+
+    shows = [m for m in godot_sees(True, two_lines_apart)
+             if m.startswith("SHOW")]
+    check("lines further apart fade out and back in",
+          [m.split(":")[1] for m in shows] == ["100", "0", "100", "0"],
+          str(shows))
+
+    async def not_yet():
+        await _line()                      # finishes before the linger ends
+
+    shows = [m for m in godot_sees(True, not_yet) if m.startswith("SHOW")]
+    check("she does not vanish the instant playback ends — she lingers",
+          shows == [f"SHOW:100:{S.GHOST_FADE_IN_MS}"], str(shows))
 
 
 def test_the_sample_rate_is_announced():
@@ -297,6 +362,7 @@ def main() -> int:
     test_off_by_default()
     test_she_fades_in_and_out()
     test_she_starts_hidden()
+    test_back_to_back_lines_do_not_flicker()
     test_the_sample_rate_is_announced()
     test_the_message_shape()
     test_amplitude_still_drives_the_mouth()

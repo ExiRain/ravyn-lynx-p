@@ -281,10 +281,15 @@ def test_ghost_fade_waits_for_playback():
     print("\n--- ghost: she fades out when she stops, not when sending stops ---")
     events: list[tuple[str, float]] = []
     chunk = 0.3
+    slow_synth = 0.5        # sentence 2 arrives after sentence 1 finished
 
     def recording_run_async(coro, timeout):
         name = coro.__name__
         coro.close()
+        if name == "push_sentence" and any(n == name for n, _ in events):
+            # Sentence 2 took longer to synthesise than sentence 1 took to
+            # play: 35 of 120 boundaries in the 2026-10-25 15:06 session.
+            time.sleep(slow_synth)
         events.append((name, time.time()))
         return chunk if name == "push_sentence" else None
 
@@ -305,14 +310,16 @@ def test_ghost_fade_waits_for_playback():
          audio.end_utterance, audio.fade_out) = saved
 
     names = [n for n, _ in events]
-    at = {n: t for n, t in reversed(events)}       # first occurrence of each
+    at = {n: t for n, t in events}                 # LAST occurrence of each
     check("the utterance runs begin, audio, END, then the fade out",
           names == ["begin_utterance", "push_sentence", "push_sentence",
                     "end_utterance", "fade_out"], str(names))
     if "fade_out" in at and "push_sentence" in at:
-        played = at["fade_out"] - at["push_sentence"]
-        check("she fades out only after two chunks have PLAYED",
-              played >= 2 * chunk - 0.05, f"{played:.2f}s after first audio")
+        after_last = at["fade_out"] - at["push_sentence"]
+        check("she fades out only after the LAST sentence has played, "
+              "counting the silence before it",
+              after_last >= chunk - 0.05,
+              f"{after_last:.2f}s after the last sentence arrived")
         check("END itself is not held back",
               at["end_utterance"] - at["push_sentence"] < 0.2,
               f"{at['end_utterance'] - at['push_sentence']:.2f}s")

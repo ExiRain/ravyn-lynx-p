@@ -357,6 +357,10 @@ class Settings:
     # visibility follows the utterance and MOUTH keeps carrying the detail.
     GHOST_FADE_IN_MS = 200
     GHOST_FADE_OUT_MS = 400
+    # Seconds she stays after the PC reckons playback ended, before the fade
+    # out starts. Covers Godot's own audio buffering, which the PC cannot see,
+    # and if her next line starts inside it she simply stays — no out-and-in.
+    GHOST_LINGER_S = 1.0
 
     # --- Language ---
     # Ambient: her own idle voice — silence filler, game reactions, promos.
