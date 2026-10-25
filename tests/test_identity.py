@@ -363,6 +363,47 @@ def test_every_game_is_counted():
         Settings.LEAGUE_MODE = league_before
 
 
+def test_notes_only_reach_note_angles():
+    """
+    His champion notes were attached to every game event, so the model quoted
+    them on kills, deaths and dragons: "mid is where you mess around" 12 times
+    in the 2026-10-25 session, its biggest single repeat. STATUS.md §7 says
+    five angles read the file; only those get the text now.
+    """
+    print("\n--- his notes reach only the angles that are about them ---")
+    import sources.lol_game as lol
+    from orchestrator.game_angles import NOTE_ANGLES
+
+    src = source()
+    src._fetch = real_game
+    src._check_for_game()
+
+    pushed = []
+    src.queue.push = lambda sig: pushed.append(sig)
+    original = lol.random.random
+    lol.random.random = lambda: 0.0
+    try:
+        src._current_game_time = 100.0
+        src._push_event("GameStart", "Game started.", {}, "GameStart")
+        for i, kind in enumerate(["Infernal", "Ocean", "Cloud", "Mountain"]):
+            src._current_game_time = 1500.0 + i * 200
+            src._handle_dragon({"DragonType": kind, "KillerName": "leesin#RU",
+                                "EventTime": src._current_game_time})
+    finally:
+        lol.random.random = original
+
+    start = pushed[0].context if pushed else {}
+    check("the opener is a note angle when he wrote a note",
+          start.get("angle_id") in NOTE_ANGLES, start.get("angle_id"))
+    check("and the opener carries his notes", "player_notes" in start)
+
+    rest = [s.context for s in pushed[1:]]
+    check("the later events were pushed", len(rest) >= 3, str(len(rest)))
+    leaked = [c.get("angle_id") for c in rest
+              if "player_notes" in c and c.get("angle_id") not in NOTE_ANGLES]
+    check("no other angle is handed his notes", not leaked, str(leaked))
+
+
 def main():
     test_loading_screen_is_not_a_game()
     test_identity_resolves_when_ready()
@@ -371,6 +412,7 @@ def main():
     test_who_did_what()
     test_objective_attribution_in_events()
     test_every_game_is_counted()
+    test_notes_only_reach_note_angles()
 
     print()
     if FAILURES:

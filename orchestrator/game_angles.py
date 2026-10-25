@@ -507,7 +507,8 @@ ACE = [
 GAME_START = [
     # These four read from data/champions.json — HIS notes, not game knowledge.
     # They only fire when he actually wrote something, so an empty file leaves
-    # the generic openers below doing exactly what they did before.
+    # the generic openers below doing exactly what they did before. See
+    # NOTE_ANGLES: only these, and my_death_told_you, get the notes at all.
     Angle("start_matchup_note",
           "He has told you something about facing one of the champions on the "
           "enemy team. Open with that — in his voice, as a thing he admits "
@@ -660,6 +661,16 @@ ANGLES: dict[str, list[Angle]] = {
     "GameStart": GAME_START,
     "GameEnd": GAME_END,
 }
+
+
+# The angles that are ABOUT his notes. The notes reach the prompt only when one
+# of these was chosen: sent with every event, the 2026-10-25 session quoted
+# "mid is where you mess around" on kills, deaths and dragons alike — 12 times
+# in three games, the session's single biggest repeat.
+NOTE_ANGLES = frozenset({
+    "start_matchup_note", "start_offrole", "start_champion_history",
+    "start_role_read", "my_death_told_you",
+})
 
 
 class AngleChooser:

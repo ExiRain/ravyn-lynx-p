@@ -27,7 +27,7 @@ from orchestrator import (game_theme, session_log, temper as temper_engine,
                           tone as tone_engine)
 from orchestrator.champion_notes import ChampionNotes
 from orchestrator.identity import Identity
-from orchestrator.game_angles import AngleChooser
+from orchestrator.game_angles import NOTE_ANGLES, AngleChooser
 from orchestrator.game_state import GameState
 from orchestrator.models import Signal
 from orchestrator.priority_queue import SignalQueue
@@ -1192,11 +1192,9 @@ class LolGameSource:
             ctx["teammate_words"] = list(words)
             ctx["teammate_rank"] = rank
 
-        # His own notes travel separately from the measured facts, and are
-        # labelled as his in the prompt. §7: she may repeat what he told her,
-        # never extend it into a read of her own.
+        # Whether his notes exist decides which angles are eligible. The note
+        # text itself is attached below, only if a note angle wins.
         if self._read:
-            ctx["player_notes"] = self._read.render()
             ctx["has_matchup_note"] = bool(self._read.matchups)
             ctx["has_champion_history"] = bool(self._read.champion_history)
             ctx["has_role_note"] = bool(self._read.role_read)
@@ -1217,6 +1215,12 @@ class LolGameSource:
         if angle is not None:
             ctx["angle"] = angle.instruction
             ctx["angle_id"] = angle.id
+
+        # His own notes travel separately from the measured facts, labelled as
+        # his. §7: she may repeat what he told her, never extend it into a
+        # read of her own — and only when the line is about the notes.
+        if self._read and angle is not None and angle.id in NOTE_ANGLES:
+            ctx["player_notes"] = self._read.render()
 
         # Tone is separate from the angle on purpose: the angle says what to
         # talk about, the tone says how warm to be about it, and multiplying
