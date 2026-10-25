@@ -289,28 +289,41 @@ class Settings:
     # data/promo.json is exactly what the stream hears.
     PROMO_ENABLED = True
 
-    # Rolled fresh each time inside this range, never a fixed cadence: a promo
-    # that arrives on the hour every hour is an advert, and the audience
-    # learns to stop hearing it.
-    PROMO_MIN_INTERVAL = 40 * 60.0
-    PROMO_MAX_INTERVAL = 80 * 60.0
+    # --- NOT League: the clock, and nothing else ---
+    # There is no game to wait for on a variety stream, so the interval is the
+    # whole rule. Rolled fresh each time inside this range rather than fixed:
+    # a promo that arrives on the hour every hour is an advert, and an
+    # audience learns to stop hearing it.
+    #
+    # 50-120 minutes over a five-hour stream is three or four asks.
+    PROMO_MIN_INTERVAL = 50 * 60.0
+    PROMO_MAX_INTERVAL = 120 * 60.0
 
     PROMO_TICK = 15.0                   # how often the gates are checked
 
-    # League only. Games are short, so a promo after every game tracks the
-    # games instead of the clock.
+    # --- League: games, and NOT the clock ---
+    # A League stream is measured in games, not hours, so the interval above
+    # does not apply at all. She asks once two games' worth has gone by.
+    #
+    # "Worth", because a 40-minute game is not the same as a 20-minute one:
+    # each finished game is worth 1, or 2 if it ran past
+    # PROMO_LONG_GAME_MINUTES. So two short games earn an ask, and one long
+    # game earns it on its own.
+    #
+    # Four or five games in a session, an ask after the second, and her
+    # wondering about the end after the fourth: one of each per session.
     PROMO_GAMES_GAP = 2
+    PROMO_LONG_GAME_MINUTES = 30.0
 
-    # And not in the instant of defeat: the post-game screen, a minute or
-    # three later. Rolled per game — a fixed ninety seconds becomes a tell.
+    # Not in the instant of defeat: the post-game screen, a minute or three
+    # later. Rolled per game — a fixed ninety seconds becomes a tell.
     PROMO_AFTER_GAME_MIN = 60.0
     PROMO_AFTER_GAME_MAX = 180.0
 
-    # After this many games she may wonder aloud whether the stream is ending
-    # instead of asking for anything. It only makes sense once there have been
-    # enough games for the question to be real.
+    # After this many games she wonders aloud whether the stream is ending,
+    # instead of asking for anything. ONCE per session: it is an observation
+    # about the evening, and an observation repeated is a nag.
     PROMO_END_WONDER_AFTER = 4
-    PROMO_END_WONDER_CHANCE = 0.5
 
     # Under VOICE_AMBIENT_PRIORITY, so a promo is HELD while he is talking
     # rather than discarded — but above everything that matters, so a

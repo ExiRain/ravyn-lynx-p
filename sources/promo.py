@@ -4,21 +4,32 @@ Asking for a follow or a sub — her third alert responsibility.
 A promo is the one thing she says that nobody asked for and that has a cost if
 it lands badly: mid-teamfight, twice in ten minutes, or over the top of him
 explaining something. So this source is almost entirely made of reasons NOT to
-speak, and the streamer's rules are the gates:
+speak — and the rules are different in kind between the two streams, not just
+different numbers.
 
-    once every 40-80 minutes          rolled fresh each time, never a fixed cadence
-    never during a game               he is playing; she is not interrupting it
-    1-3 minutes after one ends        the post-game screen, not the instant of defeat
-    after every 2nd game              games are short, promos should not track them
-    after 4 games, she may wonder     aloud whether the stream is ending
+**A League stream is measured in games, so the clock does not apply at all.**
+
+    never during a game         he is playing; she is not interrupting it
+    1-3 minutes after one ends  the post-game screen, not the instant of defeat
+    two games' worth            a 40-minute game is not a 20-minute one, so a
+                                game counts double past PROMO_LONG_GAME_MINUTES:
+                                two short games earn an ask, one long one earns
+                                it alone
+    after 4 games, once         she wonders aloud whether the stream is ending,
+                                instead of asking for anything
+
+Four or five games a session, an ask after the second and the wondering after
+the fourth: one of each, which is about as often as an ask can arrive without
+becoming something people tune out.
+
+**A variety stream has no games to count, so the clock is the whole rule** —
+once every 50-120 minutes, rolled fresh each time rather than fixed, which is
+three or four asks over a five-hour stream.
 
 **Quote signals, no model.** `skip_llm=True`, straight to TTS, so what is in
 `data/promo.json` is exactly what the stream hears. A call to action is the
 last thing that should be paraphrased by a 9B model — and five lines per pool,
 rotated in order, cannot repeat inside an evening the way a generated one can.
-
-Outside League none of the game gates apply and only the clock does, which is
-what a non-League stream looks like.
 
 It owns no state the rest of her cares about: `game_active` is set from
 outside, the same way `sources/silence_filler.py` gets it, and the game count
@@ -78,6 +89,10 @@ class PromoSource:
         # cheaper thing to ask for, so it goes first.
         self._next_ask = FOLLOW
 
+        # Once per session. "Are we about to end the stream?" is an
+        # observation about the evening, and an observation repeated is a nag.
+        self._wondered = False
+
     # -----------------------------------------------------------------
 
     def _interval(self) -> float:
@@ -91,6 +106,23 @@ class PromoSource:
 
     def _games(self) -> int:
         return len(self.temper.games) if self.temper else 0
+
+    def _credits(self) -> int:
+        """
+        How much game has gone by since the last ask, in games' worth.
+
+        A forty-minute game is not a twenty-minute one — the streamer's point:
+        two short games earn an ask, and one long game earns it on its own. So
+        a game counts double past `PROMO_LONG_GAME_MINUTES`.
+        """
+        if not self.temper:
+            return 0
+
+        total = 0
+        for game in self.temper.games[self._games_at_last_promo:]:
+            minutes = getattr(game, "minutes", 0.0) or 0.0
+            total += 2 if minutes >= settings.PROMO_LONG_GAME_MINUTES else 1
+        return total
 
     def _watch_games(self) -> None:
         """
@@ -108,38 +140,56 @@ class PromoSource:
 
     # -----------------------------------------------------------------
 
+    # A reason prefixed with this is the ordinary "not yet", not an
+    # obstacle — it is never logged, or the console would carry a line every
+    # fifteen seconds for an hour.
+    QUIET = "quiet:"
+
     def _blocked(self, now: float) -> str:
         """Why she is not asking right now, or "" if she may."""
+        if settings.LEAGUE_MODE:
+            return self._blocked_by_games(now)
+
+        # A variety stream has nothing to count but the clock.
         if now < self._due:
-            return ""           # not an obstacle, just not yet
+            return f"{self.QUIET}not due for "\
+                   f"{(self._due - now) / 60:.0f} min"
+        return ""
 
-        if not settings.LEAGUE_MODE:
-            return ""           # no games to wait for
-
+    def _blocked_by_games(self, now: float) -> str:
+        """
+        League. The clock does NOT apply here — a League stream is measured in
+        games, and an ask that arrives because an hour passed can land in the
+        middle of champion select or on a loading screen.
+        """
         if self.game_active:
-            return "a game is running"
+            return f"{self.QUIET}a game is running"
 
-        if self._last_game_end:
-            waited = now - self._last_game_end
-            if waited < self._after_game_wait:
-                return (f"only {waited:.0f}s since the game ended "
-                        f"(waiting {self._after_game_wait:.0f}s)")
+        if not self._games_seen:
+            return f"{self.QUIET}no game has finished yet"
 
-        since = self._games_seen - self._games_at_last_promo
-        if self._games_seen and since < settings.PROMO_GAMES_GAP:
-            return f"only {since} game(s) since the last one"
+        waited = now - self._last_game_end
+        if waited < self._after_game_wait:
+            return (f"{self.QUIET}only {waited:.0f}s since the game ended "
+                    f"(waiting {self._after_game_wait:.0f}s)")
+
+        credits = self._credits()
+        if credits < settings.PROMO_GAMES_GAP:
+            return (f"{self.QUIET}only {credits} game credit(s) since the "
+                    f"last ask")
 
         return ""
 
     def _pool(self) -> str:
         """
-        Which ask. After enough games she may wonder about the end of the
-        stream instead — his line, and it only makes sense once there have
-        been enough games for the question to be real.
+        Which ask. Past four games she wonders about the end of the stream
+        instead — his line, once, because it only makes sense when there have
+        been enough games for the question to be real and it stops being an
+        observation the second time she makes it.
         """
-        if (settings.LEAGUE_MODE
-                and self._games_seen >= settings.PROMO_END_WONDER_AFTER
-                and random.random() < settings.PROMO_END_WONDER_CHANCE):
+        if (settings.LEAGUE_MODE and not self._wondered
+                and self._games_seen >= settings.PROMO_END_WONDER_AFTER):
+            self._wondered = True
             return END_WONDER
 
         pool = self._next_ask
@@ -186,8 +236,14 @@ class PromoSource:
         self.queue.push(signal)
         self._due = time.time() + self._interval()
         self._games_at_last_promo = self._games_seen
+
         print(f"[promo] {signal.context['promo']}: {signal.text[:70]}")
-        print(f"[promo]   next in {(self._due - time.time()) / 60:.0f} min")
+        if settings.LEAGUE_MODE:
+            print(f"[promo]   next after "
+                  f"{settings.PROMO_GAMES_GAP} more game credit(s)")
+        else:
+            print(f"[promo]   next in "
+                  f"{(self._due - time.time()) / 60:.0f} min")
         return signal
 
     # -----------------------------------------------------------------
@@ -198,28 +254,30 @@ class PromoSource:
             print("[promo] Disabled")
             return
 
-        print(f"[promo] Active — every "
-              f"{settings.PROMO_MIN_INTERVAL / 60:.0f}-"
-              f"{settings.PROMO_MAX_INTERVAL / 60:.0f} min, first in "
-              f"{(self._due - time.time()) / 60:.0f} min")
+        if settings.LEAGUE_MODE:
+            print(f"[promo] Active — League: after "
+                  f"{settings.PROMO_GAMES_GAP} game credit(s), never during "
+                  f"a game, and the clock does not apply")
+        else:
+            print(f"[promo] Active — every "
+                  f"{settings.PROMO_MIN_INTERVAL / 60:.0f}-"
+                  f"{settings.PROMO_MAX_INTERVAL / 60:.0f} min, first in "
+                  f"{(self._due - time.time()) / 60:.0f} min")
 
         last_reason = ""
         while self._running:
             time.sleep(settings.PROMO_TICK)
-            now = time.time()
             self._watch_games()
 
-            if now < self._due:
-                continue
-
-            reason = self._blocked(now)
+            reason = self._blocked(time.time())
             if reason:
-                # Said once per reason rather than every tick: she is due, and
-                # knowing WHY she is holding is the difference between a bug
-                # and a rule doing its job.
-                if reason != last_reason:
+                # The ordinary "not yet" is silent. A real obstacle is said
+                # once per reason rather than every tick: knowing WHY she is
+                # holding is the difference between a bug and a rule doing its
+                # job, and saying it every fifteen seconds buries the log.
+                if not reason.startswith(self.QUIET) and reason != last_reason:
                     last_reason = reason
-                    print(f"[promo] Due, holding — {reason}")
+                    print(f"[promo] Holding — {reason}")
                 continue
 
             last_reason = ""

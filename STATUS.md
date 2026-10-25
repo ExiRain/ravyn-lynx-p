@@ -180,7 +180,7 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
-- `python tests/test_promo.py` — 50 checks: every gate, the rotation, and
+- `python tests/test_promo.py` — 64 checks. every gate, the rotation, and
   that outside League only the clock applies
 - `python tests/test_ghost.py` — 15 checks: the fades around the utterance,
   that nothing is sent when the flag is off, and that per-chunk visibility
@@ -880,15 +880,39 @@ as having finished. `tests/test_ghost.py` asserts `push_sentence` never sends
 
 ### Asking for a follow or a sub
 
-Her third alert responsibility, and the streamer's rules are the gates:
+Her third alert responsibility. The first version had one set of rules with
+the game gates layered on top of a timer; the streamer's correction was that
+the two streams are governed differently **in kind**:
+
+**League is measured in games, and the clock does not apply at all** — an ask
+that arrives because an hour has passed can land in champion select or on a
+loading screen.
 
 | | |
 |---|---|
-| once every 40–80 min | rolled fresh each time, never a fixed cadence |
-| never during a game | League only |
+| never during a game | he is playing; she is not interrupting |
 | 1–3 min after one ends | rolled per game; a fixed 90s becomes a tell |
-| after every 2nd game | games are short |
-| after 4 games | she may wonder aloud about the end instead |
+| two games' **worth** | a game past `PROMO_LONG_GAME_MINUTES` (30) counts double |
+| after 4 games, **once** | she wonders aloud about the end instead of asking |
+
+"Worth" rather than "games" is his point: *"if game was 40 mins then 1-3 mins
+after that we can do promo"*. Two short games earn an ask; one long game earns
+it on its own. Credits are counted since the last ask, not for the session.
+
+Four short games — his normal day — produces exactly one ask and one
+wondering, which is what he meant by once per session. Two long games produce
+one ask each, about forty minutes apart, which is the same rate the variety
+rule gives. **No minimum-gap setting was needed**: after an ask the next needs
+two credits again, and the cheapest route to two is a 30-minute game, so the
+floor is a consequence of the rule rather than another knob.
+
+The wondering fires **once**, not on a coin flip. An observation about the
+evening repeated is a nag, and the arithmetic he gave — four games, an ask
+after the second, the end question after the fourth — only works if neither is
+a dice roll.
+
+**A variety stream has no games to count, so the clock is the whole rule**:
+once every 50–120 minutes, rolled fresh, three or four asks over five hours.
 
 Five lines per pool in `data/promo.json`, **rotated in order rather than
 picked at random**, so none can land twice in an evening — the same reason the
@@ -908,7 +932,7 @@ rather than being told: temper already records one result per finished game,
 so there is no second opinion about when that happened and no new plumbing
 from the game source.
 
-`python tests/test_promo.py` — 50 checks.
+`python tests/test_promo.py` — 64 checks.
 `python tests/test_ghost.py` — 15 checks.
 
 ### Temper — what kind of company she is tonight

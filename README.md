@@ -134,15 +134,36 @@ The rest are debugging switches rather than modes: `--no-tts`, `--no-voice`,
 python -m app.main            # on; --no-promo turns it off
 ```
 
-Almost entirely made of reasons not to speak:
+Almost entirely made of reasons not to speak — and the two streams are
+governed differently in kind, not just in numbers.
+
+**League is measured in games. The clock does not apply at all**, because an
+ask that arrives because an hour passed can land in champion select or on a
+loading screen.
 
 | | |
 |---|---|
-| once every 40–80 minutes | rolled fresh each time, never a fixed cadence |
-| never during a game | League only |
+| never during a game | he is playing; she is not interrupting |
 | 1–3 minutes after one ends | the post-game screen, not the instant of defeat |
-| after every 2nd game | games are short |
-| after 4 games | she may wonder aloud whether the stream is ending instead |
+| two games' worth | a game past 30 minutes counts **double**, so two short games earn an ask and one long game earns it alone |
+| after 4 games, once | she wonders aloud whether the stream is ending, instead of asking for anything |
+
+Four short games — a normal day — produces exactly one ask and one wondering:
+
+```
+  game 1 (22 min): holding — only 1 game credit(s) since the last ask
+  game 2 (24 min): follow      If you have been here a while and still have not...
+  game 3 (19 min): holding — only 1 game credit(s) since the last ask
+  game 4 (27 min): end_wonder  Are we about to end the stream? Or not? Wonders...
+```
+
+Two asks cannot land close together: after one, the next needs two credits
+again, and the cheapest way to get them is a 30-minute game. The floor is
+built in rather than being another setting.
+
+**A variety stream has no games to count, so the clock is the whole rule** —
+once every **50–120 minutes**, rolled fresh each time, which is three or four
+asks over a five-hour stream.
 
 Five lines per pool in `data/promo.json` — `follow`, `subscribe`,
 `end_wonder` — rotated in order, so none of them can land twice in an evening.

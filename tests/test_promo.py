@@ -6,16 +6,19 @@ Asking for a follow or a sub, and all the reasons not to.
 A promo is the one thing she says that nobody asked for, so it is the one
 thing with a cost when it lands badly: mid-teamfight, twice in ten minutes, or
 over the top of him explaining something. The source is therefore almost
-entirely gates, and these are the streamer's rules as he wrote them:
+entirely gates, and the two streams are governed differently in KIND, not just
+in numbers — which is the thing these tests pin down.
 
-    once every 40-80 minutes      rolled fresh, never a fixed cadence
-    never during a game           he is playing; she is not interrupting
-    1-3 minutes after one ends    the post-game screen, not the instant of defeat
-    after every 2nd game          games are short
-    after 4 games                 she may wonder aloud about the end instead
-    five lines per pool           rotated, so none can land twice in a night
+**League is measured in games and the clock does not apply.** Never during a
+game, one to three minutes after one ends, and once two games' worth has gone
+by — where a game past 30 minutes counts double, so two short games earn an
+ask and one long game earns it alone. Past four games she wonders aloud about
+the end instead, once.
 
-Outside League only the clock applies, which is what a non-League stream is.
+**A variety stream has no games, so the clock is the whole rule** — once every
+50-120 minutes, rolled fresh.
+
+Five lines per pool either way, rotated, so none can land twice in a night.
 """
 
 import json
@@ -60,16 +63,31 @@ class FakeRandom:
         return self.coin
 
 
+SHORT = 20.0        # minutes — an ordinary game
+LONG = 42.0         # minutes — the streamer's "if game was 40 mins"
+
+
+def game(minutes: float = SHORT) -> GameResult:
+    return GameResult(won=True, kills=3, deaths=3, assists=3, minutes=minutes)
+
+
 def source(games: int = 0, league: bool = True, coin: float = 0.99,
-           temper: Temper | None = None) -> PromoSource:
+           temper: Temper | None = None, minutes: float = SHORT) -> PromoSource:
     Settings.LEAGUE_MODE = league
     promo_module.random = FakeRandom(coin)
 
     temper = temper or Temper()
     for _ in range(games):
-        temper.record_game(GameResult(won=True, kills=3, deaths=3, assists=3))
+        temper.record_game(game(minutes))
 
     return PromoSource(SignalQueue(), DATA, temper=temper)
+
+
+def ready(p: PromoSource, now=None) -> str:
+    """The gate's answer, with the silent 'not yet' marker stripped."""
+    import time
+    reason = p._blocked(now or time.time())
+    return reason[len(p.QUIET):] if reason.startswith(p.QUIET) else reason
 
 
 def restore() -> None:
@@ -79,29 +97,58 @@ def restore() -> None:
 
 
 # ===================================================================== timing
-def test_the_interval():
-    print("\n--- once every 40-80 minutes ---")
-    p = source()
+def test_the_clock_is_a_variety_stream_rule():
+    print("\n--- the clock: 50-120 minutes, and only off League ---")
     import time
+    p = source(league=False)
     wait = p._due - time.time()
 
     check("the first one is inside the range",
           S.PROMO_MIN_INTERVAL <= wait + 1 <= S.PROMO_MAX_INTERVAL,
           f"{wait / 60:.0f} min")
-    check("the range is the streamer's 40 to 80 minutes",
-          (S.PROMO_MIN_INTERVAL, S.PROMO_MAX_INTERVAL) == (2400.0, 4800.0),
+    check("the range is 50 to 120 minutes",
+          (S.PROMO_MIN_INTERVAL, S.PROMO_MAX_INTERVAL) == (3000.0, 7200.0),
           f"{S.PROMO_MIN_INTERVAL}-{S.PROMO_MAX_INTERVAL}")
-    check("and it is rolled, not fixed",
+    check("rolled, not fixed",
           "uniform" in promo_module.PromoSource._interval.__code__.co_names)
 
-    check("she is not due at startup", p._blocked(p._due - 60) == "")
+    check("before it is due she says nothing",
+          "not due" in ready(p), ready(p))
+    check("and holding for the clock is silent in the log",
+          p._blocked(time.time()).startswith(p.QUIET))
+
+    p._due = time.time() - 1
+    check("once due, nothing else is in the way", ready(p) == "", ready(p))
+    restore()
+
+
+def test_league_ignores_the_clock_entirely():
+    """
+    The streamer's correction: a League stream is measured in games. An ask
+    that arrives because an hour has passed can land in champion select or on
+    a loading screen.
+    """
+    print("\n--- League does not watch the clock ---")
+    import time
+    p = source(games=2)
+    p._games_seen = 2
+    p._last_game_end = time.time() - 600
+    p._due = time.time() + 99 * 3600       # due in four days
+
+    check("two games is enough even with the timer nowhere near",
+          ready(p) == "", ready(p))
+
+    fresh = source(games=0, league=True)
+    fresh._due = time.time() - 99 * 3600   # overdue by days
+    check("and an overdue timer does not earn an ask on its own",
+          "no game has finished" in ready(fresh), ready(fresh))
     restore()
 
 
 def test_firing_resets_the_clock():
-    print("\n--- and the clock starts again ---")
+    print("\n--- and the counting starts again ---")
     import time
-    p = source(games=4)
+    p = source(games=4, league=False)
     p._games_seen = 4
 
     before = p._due
@@ -118,34 +165,32 @@ def test_firing_resets_the_clock():
 def test_not_during_a_game():
     print("\n--- never while he is playing ---")
     import time
-    p = source()
-    p._due = time.time() - 1          # due now
+    p = source(games=2)
+    p._games_seen = 2
+    p._last_game_end = time.time() - 600
     p.game_active = True
 
-    check("a live game holds it", "game is running" in p._blocked(time.time()),
-          p._blocked(time.time()))
+    check("a live game holds it", "game is running" in ready(p), ready(p))
 
     p.game_active = False
-    p._last_game_end = 0.0
-    check("and once the game is gone it may speak",
-          p._blocked(time.time()) == "", p._blocked(time.time()))
+    check("and once the game is gone she may speak", ready(p) == "", ready(p))
     restore()
 
 
 def test_the_wait_after_a_game():
     print("\n--- 1-3 minutes after one ends ---")
     import time
-    p = source()
-    p._due = time.time() - 1
+    p = source(games=2)
+    p._games_seen = 2
     now = time.time()
 
     p._last_game_end = now - 10
     p._after_game_wait = 120.0
     check("ten seconds after a loss is too soon",
-          "since the game ended" in p._blocked(now), p._blocked(now))
+          "since the game ended" in ready(p, now), ready(p, now))
 
     p._last_game_end = now - 130
-    check("two minutes later is fine", p._blocked(now) == "", p._blocked(now))
+    check("two minutes later is fine", ready(p, now) == "", ready(p, now))
 
     check("the wait is inside the streamer's one-to-three minutes",
           S.PROMO_AFTER_GAME_MIN <= p._post_game_delay()
@@ -156,22 +201,72 @@ def test_the_wait_after_a_game():
     restore()
 
 
-def test_every_second_game():
-    print("\n--- games are short, so not after every one ---")
+def test_two_games_worth():
+    print("\n--- two games' worth, and a long game counts double ---")
     import time
-    p = source()
-    p._due = time.time() - 1
-    p._last_game_end = time.time() - 600        # long past the wait
-    p._games_seen = 3
-    p._games_at_last_promo = 2
 
-    check("one game since the last promo is not enough",
-          "game(s) since" in p._blocked(time.time()), p._blocked(time.time()))
+    one_short = source(games=1, minutes=SHORT)
+    one_short._games_seen = 1
+    one_short._last_game_end = time.time() - 600
+    check("one short game is not enough",
+          "game credit" in ready(one_short), ready(one_short))
+    check("it is worth one credit", one_short._credits() == 1,
+          str(one_short._credits()))
 
-    p._games_seen = 4
-    check("two games is", p._blocked(time.time()) == "",
-          p._blocked(time.time()))
-    check("the gap is the streamer's every-2nd-game", S.PROMO_GAMES_GAP == 2)
+    two_short = source(games=2, minutes=SHORT)
+    two_short._games_seen = 2
+    two_short._last_game_end = time.time() - 600
+    check("two short games are", ready(two_short) == "", ready(two_short))
+    check("worth two credits", two_short._credits() == 2)
+
+    # The streamer's case: "if game was 40 mins then 1-3 mins after that we
+    # can do promo".
+    one_long = source(games=1, minutes=LONG)
+    one_long._games_seen = 1
+    one_long._last_game_end = time.time() - 600
+    check("one forty-minute game earns an ask on its own",
+          ready(one_long) == "", ready(one_long))
+    check("because it is worth two", one_long._credits() == 2,
+          str(one_long._credits()))
+
+    check("the threshold is thirty minutes",
+          S.PROMO_LONG_GAME_MINUTES == 30.0)
+    check("and the gap is two", S.PROMO_GAMES_GAP == 2)
+
+    # Credits are counted SINCE the last ask, not for the whole session.
+    spent = source(games=4, minutes=SHORT)
+    spent._games_seen = 4
+    spent._last_game_end = time.time() - 600
+    spent._games_at_last_promo = 3
+    check("games before the last ask do not count again",
+          spent._credits() == 1 and "game credit" in ready(spent),
+          str(spent._credits()))
+    restore()
+
+
+def test_a_session_gets_one_of_each():
+    """
+    Four games, an ask after the second, the wondering after the fourth. The
+    streamer's arithmetic, and the reason neither is a coin flip.
+    """
+    print("\n--- four games, one ask and one wondering ---")
+    import time
+    temper = Temper()
+    p = source(temper=temper)
+    said = []
+
+    for number in range(1, 5):
+        temper.record_game(game(SHORT))
+        p._watch_games()
+        p._last_game_end = time.time() - 600        # past the post-game wait
+        if ready(p) == "":
+            signal = p.fire()
+            said.append(signal.context["promo"])
+
+    check("she asked twice in four short games", len(said) == 2, str(said))
+    check("the first was an ask", said[0] in (FOLLOW, SUBSCRIBE), str(said))
+    check("and the second was the wondering, after the fourth game",
+          said[1] == END_WONDER, str(said))
     restore()
 
 
@@ -201,9 +296,12 @@ def test_outside_league_only_the_clock_applies():
     p.game_active = True              # nothing is setting this; it is stale
     p._games_seen = 0
 
-    check("no game gates at all", p._blocked(time.time()) == "",
-          p._blocked(time.time()))
+    check("no game gates at all", ready(p) == "", ready(p))
     check("and she never wonders about game four",
+          p._pool() in (FOLLOW, SUBSCRIBE))
+
+    p._games_seen = 9
+    check("not even with a stale game count",
           p._pool() in (FOLLOW, SUBSCRIBE))
     restore()
 
@@ -238,19 +336,18 @@ def test_which_ask():
     check("it alternates rather than favouring one",
           picks == [FOLLOW, SUBSCRIBE, FOLLOW, SUBSCRIBE], str(picks))
 
-    # coin=0.99 is above PROMO_END_WONDER_CHANCE, so the wondering is refused
-    p._games_seen = 4
-    check("after four games it may still ask normally",
+    p._games_seen = 3
+    check("three games is not yet the end of anything",
           p._pool() in (FOLLOW, SUBSCRIBE))
 
-    eager = source(coin=0.0)
-    eager._games_seen = 4
-    check("and may wonder about the end instead",
-          eager._pool() == END_WONDER)
+    p._games_seen = 4
+    check("after four games she wonders about the end",
+          p._pool() == END_WONDER)
+    check("and then never again this session — an observation repeated is a "
+          "nag",
+          [p._pool() for _ in range(3)] == [SUBSCRIBE, FOLLOW, SUBSCRIBE]
+          or END_WONDER not in [p._pool() for _ in range(3)])
 
-    eager._games_seen = 3
-    check("but not before there have been enough games",
-          eager._pool() in (FOLLOW, SUBSCRIBE))
     check("four is the streamer's number", S.PROMO_END_WONDER_AFTER == 4)
     restore()
 
@@ -317,11 +414,13 @@ def test_it_can_be_turned_off():
 
 
 def main() -> int:
-    test_the_interval()
+    test_the_clock_is_a_variety_stream_rule()
+    test_league_ignores_the_clock_entirely()
     test_firing_resets_the_clock()
     test_not_during_a_game()
     test_the_wait_after_a_game()
-    test_every_second_game()
+    test_two_games_worth()
+    test_a_session_gets_one_of_each()
     test_a_game_ending_is_noticed_without_being_told()
     test_outside_league_only_the_clock_applies()
     test_the_pools()
