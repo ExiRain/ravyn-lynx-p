@@ -79,7 +79,7 @@ What the PC sends it, all of it text over `ws://localhost:9000/ws/audio`:
 | | |
 |---|---|
 | `MOOD:float` / `TIRED:float` | per utterance, before START |
-| `SHOW:percent:fade_ms` | ghost mode only — before START and after END |
+| `SHOW:percent:fade_ms` | ghost mode only — `SHOW:0:0` on connect, before START, and once playback has finished (not at END) |
 | `START` / `END` | utterance boundaries |
 | `RATE:int` | the PCM sample rate, with the first sentence only |
 | `MOUTH:float` | lip sync envelope, per chunk |
@@ -928,10 +928,18 @@ the loaded model (`self.sample_rate = int(sr)`), so a backend or checkpoint at
 drifting, and nothing in either log saying why. Godot keeps 24000 as its
 default, so an older PC build is unaffected.
 
-**`--ghost` is her avatar and nothing else.** `SHOW:100:200` before START,
-`SHOW:0:400` after END; Godot fades her alpha over those milliseconds. Nothing
-is sent when the flag is off, so a Godot build that has never heard of `SHOW`
-is unaffected.
+**`--ghost` is her avatar and nothing else.** `SHOW:0:0` when Godot connects,
+`SHOW:100:200` before START, `SHOW:0:400` once her audio has finished
+*playing*; Godot fades her alpha over those milliseconds. Nothing is sent when
+the flag is off, so a Godot build that has never heard of `SHOW` is
+unaffected.
+
+**The fade out originally went with END, and that was wrong.** END means the
+last chunk was *sent*; TTS runs several times faster than real time, so a
+twelve-second line was sent in about three and she faded out with nine seconds
+left to say — a one-sentence line faded out milliseconds after fading in. On
+the first ghost session (2026-10-25) she was effectively never visible. The
+response listener now sends it after its playback wait, in a `finally`.
 
 The spec was "0 when silent, 100 when making sound". Taken literally — alpha
 from the audio amplitude — she **strobes**: speech hits zero between

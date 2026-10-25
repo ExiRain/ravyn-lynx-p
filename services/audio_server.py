@@ -15,15 +15,17 @@ Protocol (one utterance):
       <binary chunks>  → WAV audio data (header on the first sentence only)
       MOUTH:float      → lip sync envelope
       PHONEME:p:t      → phoneme timeline
-  END                → audio done
-  SHOW:0:fade_ms     → ghost mode only: fade her out again
+  END                → audio done (sent, not yet played)
+  SHOW:0:fade_ms     → ghost mode only: fade her out again, once Godot has
+                       finished PLAYING — not straight after END
 
 Sentences are streamed as they are generated, so Godot starts playing
 sentence 1 while sentence 2 is still being synthesised.
 
 GHOST MODE (`--ghost`, for a stream where the screen is not a game): she is
-invisible until she speaks. `SHOW:100:200` before START, `SHOW:0:400` after
-END, and Godot fades her alpha over that many milliseconds. Nothing is sent
+invisible until she speaks. `SHOW:100:200` before START, `SHOW:0:400` once
+her audio has finished playing, and Godot fades her alpha over that many
+milliseconds. Nothing is sent
 when ghost mode is off, so a Godot build that ignores SHOW behaves exactly as
 it does today.
 
@@ -101,6 +103,15 @@ async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     clients.add(ws)
     print("[audio_server] Godot connected")
+
+    # Ghost mode starts her hidden. Godot loads her fully visible, so without
+    # this she sat on top of the game until her first line — and again after
+    # any reconnect.
+    if settings.GHOST_MODE:
+        try:
+            await ws.send_text("SHOW:0:0")
+        except Exception:
+            clients.discard(ws)
 
     try:
         while True:
@@ -221,17 +232,29 @@ async def push_sentence(
 
 
 async def end_utterance() -> None:
-    """Close an utterance."""
+    """Close an utterance: no more audio is coming. Godot is still playing."""
     await send_text_to_godot("END")
-
-    # After END, and a slower fade than the way in: vanishing on the last
-    # syllable reads as a glitch, while lingering for a moment reads as her
-    # having finished.
-    if settings.GHOST_MODE:
-        await set_visibility(0, settings.GHOST_FADE_OUT_MS)
 
     ts = time.strftime("%H:%M:%S")
     print(f"[{ts}][audio_server] END")
+
+
+async def fade_out() -> None:
+    """
+    Ghost mode: fade her out. Call once Godot has finished PLAYING the
+    utterance — the response listener does, after its playback wait.
+
+    It used to go out with END, i.e. when the last chunk was SENT. TTS runs
+    several times faster than real time, so a twelve-second line was sent in
+    about three and she vanished for the rest of it while still talking; a
+    one-sentence line faded out milliseconds after it faded in. In the
+    2026-10-25 ghost session she was effectively never visible.
+
+    Slower than the fade in: vanishing on the last syllable reads as a glitch,
+    lingering for a moment reads as her having finished.
+    """
+    if settings.GHOST_MODE:
+        await set_visibility(0, settings.GHOST_FADE_OUT_MS)
 
 
 async def send_face(face_type: str):

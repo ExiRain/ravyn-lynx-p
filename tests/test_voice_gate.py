@@ -50,6 +50,7 @@ async def _noop(*a, **k):
 
 audio.begin_utterance = _noop
 audio.end_utterance = _noop
+audio.fade_out = _noop
 audio.send_face = _noop
 audio.push_sentence = _noop
 sys.modules["services.audio_server"] = audio
@@ -271,6 +272,52 @@ def test_second_gate_check():
     check("--no-voice: busy cleared", cleared)
 
 
+def test_ghost_fade_waits_for_playback():
+    """
+    The 2026-10-25 ghost session: she faded out when the last chunk was SENT.
+    TTS runs several times faster than real time, so she vanished while still
+    talking — and a one-sentence line faded out right after fading in.
+    """
+    print("\n--- ghost: she fades out when she stops, not when sending stops ---")
+    events: list[tuple[str, float]] = []
+    chunk = 0.3
+
+    def recording_run_async(coro, timeout):
+        name = coro.__name__
+        coro.close()
+        events.append((name, time.time()))
+        return chunk if name == "push_sentence" else None
+
+    async def begin_utterance(*a, **k): pass
+    async def push_sentence(*a, **k): pass
+    async def end_utterance(*a, **k): pass
+    async def fade_out(*a, **k): pass
+
+    saved = (rl._run_async, audio.begin_utterance, audio.push_sentence,
+             audio.end_utterance, audio.fade_out)
+    rl._run_async = recording_run_async
+    audio.begin_utterance, audio.push_sentence = begin_utterance, push_sentence
+    audio.end_utterance, audio.fade_out = end_utterance, fade_out
+    try:
+        deliver(None, 5)
+    finally:
+        (rl._run_async, audio.begin_utterance, audio.push_sentence,
+         audio.end_utterance, audio.fade_out) = saved
+
+    names = [n for n, _ in events]
+    at = {n: t for n, t in reversed(events)}       # first occurrence of each
+    check("the utterance runs begin, audio, END, then the fade out",
+          names == ["begin_utterance", "push_sentence", "push_sentence",
+                    "end_utterance", "fade_out"], str(names))
+    if "fade_out" in at and "push_sentence" in at:
+        played = at["fade_out"] - at["push_sentence"]
+        check("she fades out only after two chunks have PLAYED",
+              played >= 2 * chunk - 0.05, f"{played:.2f}s after first audio")
+        check("END itself is not held back",
+              at["end_utterance"] - at["push_sentence"] < 0.2,
+              f"{at['end_utterance'] - at['push_sentence']:.2f}s")
+
+
 def main():
     def run_async(coro, timeout):
         try:
@@ -289,6 +336,7 @@ def main():
     test_mute_window()
     test_dispatch_policy()
     test_second_gate_check()
+    test_ghost_fade_waits_for_playback()
 
     print()
     if FAILURES:

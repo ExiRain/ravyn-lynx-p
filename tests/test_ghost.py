@@ -140,8 +140,11 @@ def utterance(ghost: bool) -> list:
 
 
 async def _run() -> None:
+    # The response listener's order: fade_out comes after its playback wait,
+    # which tests/test_voice_gate.py times; here only the messages matter.
     await audio_server.begin_utterance(mood=0.2, tired=0.1)
     await audio_server.end_utterance()
+    await audio_server.fade_out()
 
 
 # ===================================================================== on/off
@@ -176,6 +179,32 @@ def test_she_fades_in_and_out():
     check("she lingers longer than she arrives",
           S.GHOST_FADE_OUT_MS > S.GHOST_FADE_IN_MS,
           f"{S.GHOST_FADE_IN_MS} in, {S.GHOST_FADE_OUT_MS} out")
+
+
+def test_she_starts_hidden():
+    print("\n--- hidden from the moment Godot connects ---")
+    WSD = sys.modules["fastapi"].WebSocketDisconnect
+
+    class FakeSocket(FakeGodot):
+        async def accept(self):
+            pass
+
+        async def receive_text(self):
+            raise WSD()
+
+    def connect(ghost: bool) -> list:
+        Settings.GHOST_MODE = ghost
+        sock = FakeSocket()
+        try:
+            asyncio.run(audio_server.websocket_endpoint(sock))
+        finally:
+            Settings.GHOST_MODE = False
+        return sock.sent
+
+    check("ghost mode hides her instantly on connect",
+          connect(True) == ["SHOW:0:0"], str(connect(True)))
+    check("and nothing is sent when ghost mode is off",
+          connect(False) == [], str(connect(False)))
 
 
 def test_the_sample_rate_is_announced():
@@ -267,6 +296,7 @@ def test_it_is_only_about_her_avatar():
 def main() -> int:
     test_off_by_default()
     test_she_fades_in_and_out()
+    test_she_starts_hidden()
     test_the_sample_rate_is_announced()
     test_the_message_shape()
     test_amplitude_still_drives_the_mouth()
