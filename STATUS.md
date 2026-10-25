@@ -180,6 +180,11 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
+- `python tests/test_promo.py` — 50 checks: every gate, the rotation, and
+  that outside League only the clock applies
+- `python tests/test_ghost.py` — 15 checks: the fades around the utterance,
+  that nothing is sent when the flag is off, and that per-chunk visibility
+  never comes back
 - `python tests/test_stream_elements.py` — 75 checks: parsing including the
   alternative spellings, the two-dollar threshold, blocked names and messages,
   bits as a count, dedup across a restart, and that no alert can ever reach
@@ -835,6 +840,76 @@ Tone is deliberately **separate from the angle**. The angle says *what to talk
 about*, the tone says *how warm to be about it*, and multiplying them is where
 the variety lives — five tones across ~119 angles, rather than one fixed
 instruction per event type.
+
+### Two flags, both off by default
+
+`--league` and `--ghost`, turned on per run rather than argued out of — one
+shortcut per kind of stream, which is how the streamer actually launches her.
+
+**`--league` is not only about the game source.** It decides four things:
+whether the source polls at all, whether the promo waits for games, whether
+the notebook keeps the League part of her persona, and — stamped by the
+dispatcher onto every request, the same place the language is — what the
+notebook is told. Without the persona half the flag would be cosmetic: §7
+records that section as the gravity well pulling every other subject back to
+the game, so on a variety stream it is actively wrong rather than merely
+unused.
+
+The notebook strips `TEAMMATES:`, `LEAGUE OF LEGENDS:` and `CRITICAL GAME
+EVENT RULE:` by **heading**, over the blank-line block structure the file
+already has, so editing the prose inside a block cannot silently detach it
+from the list. A request with no flag keeps everything, which is what an older
+PC client gets.
+
+Both flags are written onto the `Settings` **class** at startup, not onto an
+instance: `get_settings()` builds a fresh object per call, so an instance
+would have been a copy that disagreed with the command line.
+
+**`--ghost` is her avatar and nothing else.** `SHOW:100:200` before START,
+`SHOW:0:400` after END; Godot fades her alpha over those milliseconds. Nothing
+is sent when the flag is off, so a Godot build that has never heard of `SHOW`
+is unaffected.
+
+The spec was "0 when silent, 100 when making sound". Taken literally — alpha
+from the audio amplitude — she **strobes**: speech hits zero between
+syllables, several times a word. So visibility follows the *utterance* and
+`MOUTH` keeps carrying the per-chunk detail, with a slower fade out than in,
+because vanishing on the last syllable reads as a glitch where lingering reads
+as having finished. `tests/test_ghost.py` asserts `push_sentence` never sends
+`SHOW`, which is the "improvement" that would bring the strobe back.
+
+### Asking for a follow or a sub
+
+Her third alert responsibility, and the streamer's rules are the gates:
+
+| | |
+|---|---|
+| once every 40–80 min | rolled fresh each time, never a fixed cadence |
+| never during a game | League only |
+| 1–3 min after one ends | rolled per game; a fixed 90s becomes a tell |
+| after every 2nd game | games are short |
+| after 4 games | she may wonder aloud about the end instead |
+
+Five lines per pool in `data/promo.json`, **rotated in order rather than
+picked at random**, so none can land twice in an evening — the same reason the
+alert placeholders rotate.
+
+**Spoken verbatim**, as quote signals: a call to action is the last thing to
+let a 9B model paraphrase, and five written lines cannot drift the way a
+generated one does.
+
+Priority 7 — under everything that matters, but *below*
+`VOICE_AMBIENT_PRIORITY`, so an ask is **held** while he is talking rather
+than discarded like idle filler, and expires after two minutes if he is still
+going.
+
+It learns that a game ended by **watching the temper's game count go up**
+rather than being told: temper already records one result per finished game,
+so there is no second opinion about when that happened and no new plumbing
+from the game source.
+
+`python tests/test_promo.py` — 50 checks.
+`python tests/test_ghost.py` — 15 checks.
 
 ### Temper — what kind of company she is tonight
 

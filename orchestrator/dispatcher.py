@@ -214,6 +214,14 @@ class Dispatcher:
 
     def _dispatch(self, signal: Signal, channel) -> None:
         self._resolve_lang(signal)
+
+        # Stamped here for the same reason the language is: every request that
+        # reaches the notebook carries it, and no source can forget. False
+        # makes the notebook leave the League part of her persona out of the
+        # prompt — otherwise she drags every subject back to a game nobody is
+        # playing. A source that genuinely knows better sets it itself.
+        signal.context.setdefault("league_mode", self.settings.LEAGUE_MODE)
+
         payload = json.dumps(signal.to_request())
 
         channel.basic_publish(

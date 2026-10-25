@@ -238,6 +238,7 @@ class Settings:
     #   1  a paid message read out loud (donation TTS), and the game-end cheer
     #   2  alerts — sub, follow, raid, bits — and his own voice
     #   3+ game commentary
+    #   7  asking for a follow or a sub
     #   10 idle filler
     #
     # The collisions at 1 and 2 are deliberate. A cheer is already one
@@ -282,6 +283,68 @@ class Settings:
     #
     # Strictly more important — an alert does not interrupt another alert.
     PREEMPT_ENABLED = True
+
+    # --- Asking for a follow or a sub ---
+    # Her third alert responsibility. Quote signals — what is in
+    # data/promo.json is exactly what the stream hears.
+    PROMO_ENABLED = True
+
+    # Rolled fresh each time inside this range, never a fixed cadence: a promo
+    # that arrives on the hour every hour is an advert, and the audience
+    # learns to stop hearing it.
+    PROMO_MIN_INTERVAL = 40 * 60.0
+    PROMO_MAX_INTERVAL = 80 * 60.0
+
+    PROMO_TICK = 15.0                   # how often the gates are checked
+
+    # League only. Games are short, so a promo after every game tracks the
+    # games instead of the clock.
+    PROMO_GAMES_GAP = 2
+
+    # And not in the instant of defeat: the post-game screen, a minute or
+    # three later. Rolled per game — a fixed ninety seconds becomes a tell.
+    PROMO_AFTER_GAME_MIN = 60.0
+    PROMO_AFTER_GAME_MAX = 180.0
+
+    # After this many games she may wonder aloud whether the stream is ending
+    # instead of asking for anything. It only makes sense once there have been
+    # enough games for the question to be real.
+    PROMO_END_WONDER_AFTER = 4
+    PROMO_END_WONDER_CHANCE = 0.5
+
+    # Under VOICE_AMBIENT_PRIORITY, so a promo is HELD while he is talking
+    # rather than discarded — but above everything that matters, so a
+    # donation, an alert, his voice and game commentary all come first.
+    PROMO_PRIORITY = 7
+
+    # An ask that waited out two minutes of him explaining something has
+    # missed its moment, and another is due within the hour.
+    PROMO_TTL = 120.0
+
+    # --- The two mode flags ---
+    # Both OFF by default and turned on per run, because that is how the
+    # shortcuts are written: one icon per kind of stream.
+    #
+    #   python -m app.main --league     he is playing League
+    #   python -m app.main --ghost      she is invisible until she speaks
+    #
+    # LEAGUE decides four things, not just whether the game source runs: the
+    # promo's game gates, and whether the notebook keeps the League part of
+    # her persona (without that she drags every subject back to a game nobody
+    # is playing — ravyn-lynx-p/STATUS.md §7).
+    LEAGUE_MODE = False
+
+    # GHOST is only about her avatar: she fades in when she speaks and fades
+    # out when she stops, so she is not sitting on top of something that
+    # matters. For a variety stream, where the screen is not a game anyone is
+    # reading. See services/audio_server.py.
+    GHOST_MODE = False
+
+    # The fades, in milliseconds. Driving alpha straight from the audio
+    # amplitude makes her strobe — speech hits zero between syllables — so
+    # visibility follows the utterance and MOUTH keeps carrying the detail.
+    GHOST_FADE_IN_MS = 200
+    GHOST_FADE_OUT_MS = 400
 
     # --- Language ---
     # Ambient: her own idle voice — silence filler, game reactions, promos.

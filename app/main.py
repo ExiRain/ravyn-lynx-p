@@ -6,14 +6,30 @@ reacts to, speaks it, and drives the avatar. The notebook is an LLM
 service — it writes her lines and nothing else.
 
 Usage:
-    python -m app.main                # full stack: orchestrator + TTS
-    python -m app.main --no-tts       # silent mode — log her lines, no audio
+    python -m app.main                # a stream: chat, voice, alerts, promos
+    python -m app.main --league       # he is playing League
+    python -m app.main --ghost        # invisible until she speaks
+
+Two mode flags, both off by default, one per kind of stream — written that way
+because the shortcuts are:
+
+    --league   starts the game source, puts the game gates on her promos, and
+               keeps the League part of her persona in the prompt. Without it
+               she drags every subject back to a game nobody is playing
+               (STATUS.md §7), so this is not only about the game source.
+    --ghost    her avatar alone: she fades in when she speaks and out when she
+               stops, so she is not sitting on top of something that matters.
+               Nothing else about her changes.
+
+The rest are switches for debugging, not modes:
+
+    python -m app.main --no-tts       # silent — log her lines, no audio
     python -m app.main --no-voice     # disable the voice gate (VAD)
     python -m app.main --no-hear      # keep the gate, but do not transcribe
-    python -m app.main --test         # mock sources
-    python -m app.main --no-twitch
-    python -m app.main --no-lol
+    python -m app.main --no-twitch    # no chat
     python -m app.main --no-alerts    # no StreamElements polling
+    python -m app.main --no-promo     # she never asks for a follow or a sub
+    python -m app.main --test         # mock sources
 """
 
 import sys
@@ -22,7 +38,7 @@ import uvicorn
 from pathlib import Path
 from threading import Thread
 
-from app.settings import get_settings
+from app.settings import Settings, get_settings
 from orchestrator import session_log, temper as temper_engine
 from orchestrator.identity import Identity
 from orchestrator.priority_queue import SignalQueue
@@ -33,11 +49,24 @@ from sources.silence_filler import SilenceFiller
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 TEST_MODE = "--test" in sys.argv
 NO_TWITCH = "--no-twitch" in sys.argv
-NO_LOL = "--no-lol" in sys.argv
 NO_TTS = "--no-tts" in sys.argv
 NO_ALERTS = "--no-alerts" in sys.argv
+NO_PROMO = "--no-promo" in sys.argv
 NO_VOICE = "--no-voice" in sys.argv
 NO_HEAR = "--no-hear" in sys.argv
+
+# The two modes. Off by default and turned on per run — one shortcut per kind
+# of stream, rather than a default that has to be argued out of.
+LEAGUE = "--league" in sys.argv
+GHOST = "--ghost" in sys.argv
+
+# Written onto the class, so every component reads ONE answer to each: the
+# promo's game gates, the dispatcher stamping league_mode onto every request
+# for the notebook, the audio server's fades. `get_settings()` builds a fresh
+# object per call and these are plain class attributes, so an instance would
+# have been a copy that disagreed with the flag.
+Settings.LEAGUE_MODE = LEAGUE
+Settings.GHOST_MODE = GHOST
 
 
 def main():
@@ -56,8 +85,8 @@ def main():
     print(f"  Rabbit: {settings.RABBIT_HOST}:{settings.RABBIT_PORT}")
     if not NO_TWITCH and not TEST_MODE:
         print(f"  Twitch: #{settings.TWITCH_CHANNEL}")
-    if not NO_LOL and not TEST_MODE:
-        print(f"  LoL: active")
+    print(f"  Mode: {'League' if LEAGUE else 'variety'}"
+          + ("  + ghost" if GHOST else ""))
     if not NO_ALERTS and not TEST_MODE:
         print(f"  Alerts: StreamElements"
               + ("" if settings.SE_JWT else "  (no RAVYN_SE_JWT — off)"))
@@ -157,15 +186,29 @@ def main():
     dispatcher.on_dispatch(silence.on_activity)
     Thread(target=silence.run, daemon=True, name="silence-filler").start()
 
+    # --- Asking for a follow or a sub ---
+    # Almost entirely made of reasons not to speak — see sources/promo.py.
+    # Built before the game source so that source can hand it game state.
+    promo = None
+    if not NO_PROMO and not TEST_MODE:
+        from sources.promo import PromoSource
+        promo = PromoSource(queue, DATA_DIR, temper=temper)
+        Thread(target=promo.run, daemon=True, name="promo").start()
+
     # --- LoL ---
     lol = None
-    if not NO_LOL and not TEST_MODE:
+    if LEAGUE and not TEST_MODE:
         from sources.lol_game import LolGameSource
         lol = LolGameSource(queue, DATA_DIR, identity=identity, temper=temper)
 
         def _sync_game(signal):
             if lol:
+                # Both of them hold off while a game is live, for different
+                # reasons: the filler has nothing to fill, and a promo would
+                # be talking over the thing people came to watch.
                 silence.game_active = lol.is_game_active
+                if promo:
+                    promo.game_active = lol.is_game_active
 
         dispatcher.on_dispatch(_sync_game)
         Thread(target=lol.run, daemon=True, name="lol-game").start()

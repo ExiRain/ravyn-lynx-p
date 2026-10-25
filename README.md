@@ -40,6 +40,8 @@ here, which keeps the notebook's whole 4070 free for the model.
 | **Idle** | silence filler — improv seeds through the LLM, or quotes straight to TTS |
 | **Language** | English and Russian, resolved before generation so the voice can be told too; a person's language sticks |
 | **Temper** | supportive / neutral / negative, moved by the session and clamping how hard she is allowed to be |
+| **Promos** | asking for a follow or a sub, every 40–80 min, never mid-game, five rotated lines per pool |
+| **Modes** | `--league` (game source, game gates, League persona) and `--ghost` (invisible until she speaks) |
 | **Sanitizing** | viewer names and messages made safe to say out loud, with a blocklist matched against a normalised form |
 | **Measurement** | every line logged with what produced it, a three-line summary per game, and a running table across sessions |
 
@@ -55,11 +57,9 @@ Eleven standalone test suites, no pytest and no network: `python tests/test_*.py
   `--replay` runs the whole path offline, so a wrong field name is a one-line
   fix rather than an investigation. **This is the thing to watch on the first
   real donation.**
-- **Asking for a follow or a sub.** Her third alert responsibility, not yet
-  designed.
-- **A non-League mode.** `--no-lol` stops the game source, but her persona
-  still carries its League section, so she pulls other subjects back to the
-  game. Needs an `isLeague` flag that reaches the prompt.
+- **The Godot half of ghost mode.** The PC sends `SHOW:percent:fade_ms`; the
+  avatar has to fade on it. That is `ExiRain/ravyn-lynx-godot`, untouched so
+  far.
 - ~~One view over both logs~~ — **done**, `tools/join_logs.py`. Copy the
   notebook's worker log over and it prints her line beside the prompt that
   produced it, with a reading per repeat.
@@ -92,6 +92,67 @@ PC (this repo)                              Notebook (Fedora)
 
 Ravyn is marked busy when the dispatcher publishes a request and idle again
 only once her audio has finished playing, so signals never overlap her voice.
+
+## Two flags
+
+Both off by default, one per kind of stream, because that is how the shortcuts
+are written:
+
+```powershell
+python -m app.main            # a variety stream
+python -m app.main --league   # he is playing League
+python -m app.main --ghost    # invisible until she speaks
+python -m app.main --league --ghost
+```
+
+**`--league`** decides four things, not just whether the game source runs:
+
+| | |
+|---|---|
+| the game source | polls the Live Client API, commentates |
+| her promos | wait for a game to end, and for every second game |
+| her persona | the notebook keeps the League section — without the flag it is left out, or she drags every subject back to a game nobody is playing |
+| the flag itself | stamped on every request by the dispatcher, so no source can forget |
+
+**`--ghost`** is her avatar and nothing else: `SHOW:100:200` before she
+speaks, `SHOW:0:400` after she stops, and Godot fades her alpha over those
+milliseconds. For a stream where the screen is not a game anyone is reading.
+Nothing is sent when the flag is off, so a Godot build that has never heard of
+`SHOW` behaves exactly as it does today.
+
+Visibility follows the **utterance**, not the amplitude. Alpha driven straight
+from the audio strobes — speech hits zero between syllables, several times a
+word — so `MOUTH` keeps carrying that detail and `SHOW` only says "she is
+speaking now".
+
+The rest are debugging switches rather than modes: `--no-tts`, `--no-voice`,
+`--no-hear`, `--no-twitch`, `--no-alerts`, `--no-promo`, `--test`.
+
+## Asking for a follow or a sub
+
+```powershell
+python -m app.main            # on; --no-promo turns it off
+```
+
+Almost entirely made of reasons not to speak:
+
+| | |
+|---|---|
+| once every 40–80 minutes | rolled fresh each time, never a fixed cadence |
+| never during a game | League only |
+| 1–3 minutes after one ends | the post-game screen, not the instant of defeat |
+| after every 2nd game | games are short |
+| after 4 games | she may wonder aloud whether the stream is ending instead |
+
+Five lines per pool in `data/promo.json` — `follow`, `subscribe`,
+`end_wonder` — rotated in order, so none of them can land twice in an evening.
+Spoken verbatim as quote signals: a call to action is the last thing to let a
+9B model paraphrase.
+
+Priority 7, so a donation, an alert, his voice and game commentary all come
+first — but under `VOICE_AMBIENT_PRIORITY`, so an ask is held while he is
+talking rather than thrown away, and expires after two minutes if he is still
+going.
 
 ## Setup
 
@@ -131,6 +192,7 @@ services/
 
 sources/
   stream_elements.py   tips, subs, follows, cheers, raids — straight to TTS
+  promo.py             asking for a follow or a sub, and the gates on it
   silence_filler.py    timer-based — improv seeds (LLM) or quotes (TTS direct)
 
 orchestrator/
