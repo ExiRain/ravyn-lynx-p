@@ -37,7 +37,8 @@ from __future__ import annotations
 import asyncio
 import time
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
 from app.settings import get_settings
 
@@ -240,6 +241,97 @@ async def send_face(face_type: str):
 
 def has_clients() -> bool:
     return len(clients) > 0
+
+
+# =========================================================
+# DEBUG: fire a test alert into the live pipeline
+# =========================================================
+
+# Set by app/main.py only when started with --debug-alerts, to
+# StreamElementsSource._handle of the SAME instance real donations go
+# through — same sanitizer, same dedup, same Signal shape. Left unset on an
+# ordinary run, so the route 404s instead of silently doing nothing: a test
+# endpoint that exists on every stream, reachable on 0.0.0.0, is worse than
+# one that is visibly off by default.
+_alert_injector = None
+_promo_injector = None   # (fire, status) — see register_promo_injector
+
+
+def register_alert_injector(handler) -> None:
+    global _alert_injector
+    _alert_injector = handler
+
+
+def register_promo_injector(fire, status) -> None:
+    """
+    fire(pool|None) -> Signal|None   — PromoSource.fire, gates ignored
+    status() -> str                  — PromoSource._blocked(now), "" if she may ask
+    """
+    global _promo_injector
+    _promo_injector = (fire, status)
+
+
+@app.post("/debug/alert")
+async def debug_alert(activity: dict = Body(...)):
+    """
+    Fire one StreamElements-shaped activity through the real pipeline —
+    parse, sanitize, compose, push onto the live queue TTS/OBS consume from.
+
+    Same shape `_parse_activity` reads: {"type": ..., "data": {...}}. Paste
+    one straight from a `[se] FIRST ... payload` log line, or use
+    tools/fire_alert.py to build one from plain arguments.
+    """
+    if _alert_injector is None:
+        return JSONResponse(
+            {"error": "debug alerts are off — start app.main with "
+                      "--debug-alerts to turn this on"},
+            status_code=404,
+        )
+
+    signal = _alert_injector(activity)
+    if signal is None:
+        return {"fired": False,
+                "reason": "parsed to nothing — unknown type, duplicate id, "
+                          "or a field name that did not match"}
+    return {"fired": True, "text": signal.text, "source": signal.source}
+
+
+@app.post("/debug/promo")
+async def debug_promo(body: dict = Body(default={})):
+    """
+    Force one promo ask through, gates ignored — PromoSource.fire(pool).
+
+    body: {"pool": "follow" | "subscribe" | "end_wonder"}, or {} / omitted
+    to let her pick the next one in her normal alternating order.
+    """
+    if _promo_injector is None:
+        return JSONResponse(
+            {"error": "debug alerts are off — start app.main with "
+                      "--debug-alerts to turn this on"},
+            status_code=404,
+        )
+    fire, _status = _promo_injector
+    signal = fire(body.get("pool"))
+    if signal is None:
+        return {"fired": False,
+                "reason": "no line configured for that pool in "
+                          "data/promo.json"}
+    return {"fired": True, "text": signal.text,
+            "pool": signal.context.get("promo")}
+
+
+@app.get("/debug/promo/status")
+async def debug_promo_status():
+    """Why she would not ask right now, or "" if nothing is blocking her."""
+    if _promo_injector is None:
+        return JSONResponse(
+            {"error": "debug alerts are off — start app.main with "
+                      "--debug-alerts to turn this on"},
+            status_code=404,
+        )
+    _fire, status = _promo_injector
+    reason = status()
+    return {"blocked": bool(reason), "reason": reason}
 
 
 # =========================================================
