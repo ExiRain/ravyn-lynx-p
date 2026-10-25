@@ -28,12 +28,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # is involved in anything tested here: visibility is two text messages around
 # an utterance. Stubbed rather than installed, the same way the other suites
 # stub pika and requests, so this stays runnable with no dependencies.
+class _FakeArray:
+    """Just enough array for the envelope maths: a length and a size."""
+
+    def __init__(self, values):
+        self._values = list(values)
+
+    size = property(lambda self: len(self._values))
+
+    def __len__(self):
+        return len(self._values)
+
+    def __getitem__(self, item):
+        result = self._values[item]
+        return _FakeArray(result) if isinstance(item, slice) else result
+
+    def astype(self, _dtype):
+        return self
+
+    def __pow__(self, _n):
+        return self
+
+
 _np = types.ModuleType("numpy")
-_np.frombuffer = lambda *a, **k: []
+_np.frombuffer = lambda buf, dtype=None: _FakeArray(
+    [1] * (len(buf) // 2) if buf else [])
 _np.abs = lambda x: x
 _np.max = lambda x, **k: 0.0
-_np.mean = lambda x, **k: 0.0
-_np.sqrt = lambda x: 0.0
+_np.mean = lambda x, **k: 1.0
+_np.sqrt = lambda x: 1.0
 _np.int16 = "int16"
 _np.float32 = "float32"
 sys.modules.setdefault("numpy", _np)
@@ -142,6 +165,42 @@ def test_she_fades_in_and_out():
           f"{S.GHOST_FADE_IN_MS} in, {S.GHOST_FADE_OUT_MS} out")
 
 
+def test_the_sample_rate_is_announced():
+    """
+    It never was, and Godot assumed 24000 — true only while the TTS happens
+    to run there. `TTSEngine.sample_rate` is read from the loaded model, so a
+    backend at 22050 or 48000 would have played her back at the wrong pitch
+    with nothing in either log to say why.
+    """
+    print("\n--- the rate the PCM is actually at ---")
+    client = FakeGodot()
+    audio_server.clients.clear()
+    audio_server.clients.add(client)
+
+    header = b"\x00" * audio_server.WAV_HEADER_SIZE
+    body = b"\x01\x00" * 2400
+
+    try:
+        asyncio.run(audio_server.push_sentence(header + body, is_first=True,
+                                               sample_rate=22050))
+        first = list(client.sent)
+        client.sent.clear()
+        asyncio.run(audio_server.push_sentence(header + body, is_first=False,
+                                               sample_rate=22050))
+        later = list(client.sent)
+    finally:
+        audio_server.clients.discard(client)
+
+    check("the first sentence says the rate", "RATE:22050" in first,
+          str(first[:3]))
+    check("before any audio",
+          first.index("RATE:22050") < next(i for i, m in enumerate(first)
+                                           if m.startswith("<")),
+          str(first[:3]))
+    check("and only once per utterance, not per sentence",
+          not any(m.startswith("RATE") for m in later), str(later[:3]))
+
+
 def test_the_message_shape():
     print("\n--- SHOW:percent:fade_ms ---")
     client = FakeGodot()
@@ -195,6 +254,7 @@ def test_it_is_only_about_her_avatar():
 def main() -> int:
     test_off_by_default()
     test_she_fades_in_and_out()
+    test_the_sample_rate_is_announced()
     test_the_message_shape()
     test_amplitude_still_drives_the_mouth()
     test_it_is_only_about_her_avatar()

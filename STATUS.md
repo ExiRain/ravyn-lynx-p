@@ -867,6 +867,14 @@ Both flags are written onto the `Settings` **class** at startup, not onto an
 instance: `get_settings()` builds a fresh object per call, so an instance
 would have been a copy that disagreed with the command line.
 
+**The sample rate is sent now, which was a bug.** `RATE:<int>` goes out with
+the first sentence of each utterance. Godot hardcoded 24000 in three places
+and the PC never told it the rate — but `TTSEngine.sample_rate` is read from
+the loaded model (`self.sample_rate = int(sr)`), so a backend or checkpoint at
+22050 or 48000 would have played her back at the wrong pitch with the lip sync
+drifting, and nothing in either log saying why. Godot keeps 24000 as its
+default, so an older PC build is unaffected.
+
 **`--ghost` is her avatar and nothing else.** `SHOW:100:200` before START,
 `SHOW:0:400` after END; Godot fades her alpha over those milliseconds. Nothing
 is sent when the flag is off, so a Godot build that has never heard of `SHOW`

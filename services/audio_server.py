@@ -9,6 +9,8 @@ Protocol (one utterance):
   TIRED:float        → tired value
   SHOW:pct:fade_ms   → ghost mode only: fade her in before she speaks
   START              → audio incoming
+    first sentence only:
+      RATE:int         → the sample rate the PCM is at
     per sentence:
       <binary chunks>  → WAV audio data (header on the first sentence only)
       MOUTH:float      → lip sync envelope
@@ -186,6 +188,16 @@ async def push_sentence(
         return 0.0
 
     duration = len(pcm_samples) / sample_rate
+
+    # The rate the PCM is actually at, said out loud once per utterance.
+    #
+    # It was never sent, and Godot assumed 24000 — which is only true while
+    # the TTS happens to run there. `TTSEngine.sample_rate` is read from the
+    # loaded model (`self.sample_rate = int(sr)`), so a backend or checkpoint
+    # at 22050 or 48000 would have played her back at the wrong pitch and
+    # drifted the lip sync, with nothing in either log to say why.
+    if is_first:
+        await send_text_to_godot(f"RATE:{int(sample_rate)}")
 
     # audio
     for i in range(0, len(payload), AUDIO_CHUNK_BYTES):

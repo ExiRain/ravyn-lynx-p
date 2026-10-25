@@ -116,7 +116,7 @@ python -m app.main --league --ghost
 
 **`--ghost`** is her avatar and nothing else: `SHOW:100:200` before she
 speaks, `SHOW:0:400` after she stops, and Godot fades her alpha over those
-milliseconds. For a stream where the screen is not a game anyone is reading.
+milliseconds. The Godot side of this is in that project, not here. For a stream where the screen is not a game anyone is reading.
 Nothing is sent when the flag is off, so a Godot build that has never heard of
 `SHOW` behaves exactly as it does today.
 
