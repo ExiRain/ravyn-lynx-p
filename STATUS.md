@@ -180,10 +180,10 @@ Two committed suites, both standalone (no pytest, no network):
   confidence rule, per-person stickiness, and unchanged precedence
 - `python tests/test_identity.py` — 40 checks: the loading-screen gate, RU
   riotId matching, and that nothing guesses a side it does not know
-- `python tests/test_promo.py` — 64 checks: every gate, game credits with a
-  long game counting double, that League ignores the clock and a variety
-  stream has nothing else to go on, the rotation, and that four games produce
-  one ask and one wondering
+- `python tests/test_promo.py` — 69 checks: every gate, the ask slot rolling
+  between the second and third game, that League ignores the clock and a
+  variety stream has nothing else to go on, the rotation, and that a session
+  gets exactly one ask and one end question
 - `python tests/test_ghost.py` — 15 checks: the fades around the utterance,
   that nothing is sent when the flag is off, and that per-chunk visibility
   never comes back
@@ -934,7 +934,7 @@ rather than being told: temper already records one result per finished game,
 so there is no second opinion about when that happened and no new plumbing
 from the game source.
 
-`python tests/test_promo.py` — 64 checks.
+`python tests/test_promo.py` — 69 checks.
 `python tests/test_ghost.py` — 15 checks.
 
 ### Temper — what kind of company she is tonight

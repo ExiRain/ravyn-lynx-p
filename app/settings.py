@@ -303,17 +303,13 @@ class Settings:
 
     # --- League: games, and NOT the clock ---
     # A League stream is measured in games, not hours, so the interval above
-    # does not apply at all. She asks once two games' worth has gone by.
+    # does not apply at all.
     #
-    # "Worth", because a 40-minute game is not the same as a 20-minute one:
-    # each finished game is worth 1, or 2 if it ran past
-    # PROMO_LONG_GAME_MINUTES. So two short games earn an ask, and one long
-    # game earns it on its own.
-    #
-    # Four or five games in a session, an ask after the second, and her
-    # wondering about the end after the fourth: one of each per session.
-    PROMO_GAMES_GAP = 2
-    PROMO_LONG_GAME_MINUTES = 30.0
+    # ONE ask per session, after the 2nd or the 3rd game — which one is rolled
+    # at startup. A session is four or five games, so a single ask is the
+    # whole budget, and rolling between two slots keeps it from being the same
+    # beat every night.
+    PROMO_ASK_AFTER_GAMES = (2, 3)
 
     # Not in the instant of defeat: the post-game screen, a minute or three
     # later. Rolled per game — a fixed ninety seconds becomes a tell.
@@ -323,6 +319,9 @@ class Settings:
     # After this many games she wonders aloud whether the stream is ending,
     # instead of asking for anything. ONCE per session: it is an observation
     # about the evening, and an observation repeated is a nag.
+    #
+    # It also takes precedence over a missed ask — if the ask never found a
+    # gap, the fourth game is the end question rather than a late advert.
     PROMO_END_WONDER_AFTER = 4
 
     # Under VOICE_AMBIENT_PRIORITY, so a promo is HELD while he is talking

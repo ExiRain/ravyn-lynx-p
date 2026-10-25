@@ -10,10 +10,9 @@ entirely gates, and the two streams are governed differently in KIND, not just
 in numbers — which is the thing these tests pin down.
 
 **League is measured in games and the clock does not apply.** Never during a
-game, one to three minutes after one ends, and once two games' worth has gone
-by — where a game past 30 minutes counts double, so two short games earn an
-ask and one long game earns it alone. Past four games she wonders aloud about
-the end instead, once.
+game, one to three minutes after one ends, and ONE ask per session — after the
+2nd or the 3rd game, rolled at startup. Past four games she wonders aloud
+about the end instead, once, and that outranks an ask that never found a gap.
 
 **A variety stream has no games, so the clock is the whole rule** — once every
 50-120 minutes, rolled fresh.
@@ -51,7 +50,11 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 
 class FakeRandom:
-    """Deterministic: midpoint of any range, and a dial for the coin flips."""
+    """
+    Deterministic: the midpoint of any range, the first of any choice, and a
+    dial for the coin flips. Tests that care about the ask slot set
+    `_ask_after` directly rather than leaning on this.
+    """
 
     def __init__(self, coin: float = 0.99):
         self.coin = coin
@@ -59,12 +62,14 @@ class FakeRandom:
     def uniform(self, low, high):
         return (low + high) / 2.0
 
+    def choice(self, options):
+        return list(options)[0]
+
     def random(self):
         return self.coin
 
 
 SHORT = 20.0        # minutes — an ordinary game
-LONG = 42.0         # minutes — the streamer's "if game was 40 mins"
 
 
 def game(minutes: float = SHORT) -> GameResult:
@@ -156,8 +161,7 @@ def test_firing_resets_the_clock():
     check("something was queued", signal is not None and p.queue.pop() is not None)
     check("the next one is a fresh interval away", p._due > before,
           f"{(p._due - time.time()) / 60:.0f} min")
-    check("and the game count is remembered, for the every-2nd-game rule",
-          p._games_at_last_promo == 4)
+    check("and her one ask is spent", p._asked is True)
     restore()
 
 
@@ -201,72 +205,115 @@ def test_the_wait_after_a_game():
     restore()
 
 
-def test_two_games_worth():
-    print("\n--- two games' worth, and a long game counts double ---")
+def test_one_ask_after_game_two_or_three():
+    """
+    The streamer's correction: a session is four or five games, so ONE ask is
+    the whole budget, after the 2nd or the 3rd game, which of the two rolled
+    at startup.
+    """
+    print("\n--- one ask, after game 2 or 3 ---")
     import time
 
-    one_short = source(games=1, minutes=SHORT)
-    one_short._games_seen = 1
-    one_short._last_game_end = time.time() - 600
-    check("one short game is not enough",
-          "game credit" in ready(one_short), ready(one_short))
-    check("it is worth one credit", one_short._credits() == 1,
-          str(one_short._credits()))
+    check("the two slots are the streamer's", S.PROMO_ASK_AFTER_GAMES == (2, 3))
 
-    two_short = source(games=2, minutes=SHORT)
-    two_short._games_seen = 2
-    two_short._last_game_end = time.time() - 600
-    check("two short games are", ready(two_short) == "", ready(two_short))
-    check("worth two credits", two_short._credits() == 2)
+    slots = set()
+    for _ in range(40):
+        import random as real_random
+        promo_module.random = real_random
+        slots.add(PromoSource(SignalQueue(), DATA, temper=Temper())._ask_after)
+    check("and it is rolled between them, not fixed", slots == {2, 3},
+          str(slots))
 
-    # The streamer's case: "if game was 40 mins then 1-3 mins after that we
-    # can do promo".
-    one_long = source(games=1, minutes=LONG)
-    one_long._games_seen = 1
-    one_long._last_game_end = time.time() - 600
-    check("one forty-minute game earns an ask on its own",
-          ready(one_long) == "", ready(one_long))
-    check("because it is worth two", one_long._credits() == 2,
-          str(one_long._credits()))
+    early = source(games=1)
+    early._ask_after = 2
+    early._games_seen = 1
+    early._last_game_end = time.time() - 600
+    check("one game is too early for a slot-2 ask",
+          "waiting for game 2" in ready(early), ready(early))
 
-    check("the threshold is thirty minutes",
-          S.PROMO_LONG_GAME_MINUTES == 30.0)
-    check("and the gap is two", S.PROMO_GAMES_GAP == 2)
+    early._games_seen = 2
+    check("two games is the slot", ready(early) == "", ready(early))
 
-    # Credits are counted SINCE the last ask, not for the whole session.
-    spent = source(games=4, minutes=SHORT)
-    spent._games_seen = 4
+    late = source(games=2)
+    late._ask_after = 3
+    late._games_seen = 2
+    late._last_game_end = time.time() - 600
+    check("a slot-3 ask waits past the second game",
+          "waiting for game 3" in ready(late), ready(late))
+
+    late._games_seen = 3
+    check("and lands on the third", ready(late) == "", ready(late))
+
+    # The budget is one.
+    spent = source(games=3)
+    spent._ask_after = 2
+    spent._games_seen = 3
     spent._last_game_end = time.time() - 600
-    spent._games_at_last_promo = 3
-    check("games before the last ask do not count again",
-          spent._credits() == 1 and "game credit" in ready(spent),
-          str(spent._credits()))
+    spent._asked = True
+    check("having asked once, she does not ask again",
+          "one ask this session" in ready(spent), ready(spent))
+
+    check("the slot is fixed for the evening, not re-rolled per check",
+          "_ask_after" in promo_module.PromoSource.__init__.__code__.co_names)
+    restore()
+
+
+def test_the_end_question_outranks_a_missed_ask():
+    print("\n--- on the fourth game, a late advert is worse than none ---")
+    import time
+    p = source(games=4)
+    p._ask_after = 3
+    p._games_seen = 4
+    p._last_game_end = time.time() - 600
+    p._asked = False               # the slot came and went without a gap
+
+    check("she is allowed to speak", ready(p) == "", ready(p))
+    check("and what she says is the end question, not the ask",
+          p._pool() == END_WONDER)
     restore()
 
 
 def test_a_session_gets_one_of_each():
     """
-    Four games, an ask after the second, the wondering after the fourth. The
-    streamer's arithmetic, and the reason neither is a coin flip.
+    Four games: one ask, then the wondering. The streamer's arithmetic, and
+    the reason neither is a coin flip.
     """
     print("\n--- four games, one ask and one wondering ---")
     import time
+
+    for slot in (2, 3):
+        temper = Temper()
+        p = source(temper=temper)
+        p._ask_after = slot
+        said = []
+
+        for number in range(1, 6):
+            temper.record_game(game(SHORT))
+            p._watch_games()
+            p._last_game_end = time.time() - 600    # past the post-game wait
+            if ready(p) == "":
+                said.append(p.fire().context["promo"])
+
+        check(f"slot {slot}: she speaks exactly twice in five games",
+              len(said) == 2, str(said))
+        check(f"slot {slot}: an ask first",
+              said and said[0] in (FOLLOW, SUBSCRIBE), str(said))
+        check(f"slot {slot}: then the end question",
+              len(said) > 1 and said[1] == END_WONDER, str(said))
+
+    # The honest consequence of his rule: a short session can miss the ask.
     temper = Temper()
     p = source(temper=temper)
+    p._ask_after = 3
     said = []
-
-    for number in range(1, 5):
+    for _ in range(2):
         temper.record_game(game(SHORT))
         p._watch_games()
-        p._last_game_end = time.time() - 600        # past the post-game wait
+        p._last_game_end = time.time() - 600
         if ready(p) == "":
-            signal = p.fire()
-            said.append(signal.context["promo"])
-
-    check("she asked twice in four short games", len(said) == 2, str(said))
-    check("the first was an ask", said[0] in (FOLLOW, SUBSCRIBE), str(said))
-    check("and the second was the wondering, after the fourth game",
-          said[1] == END_WONDER, str(said))
+            said.append(p.fire().context["promo"])
+    check("a two-game session with a slot-3 ask gets nothing, by design",
+          said == [], str(said))
     restore()
 
 
@@ -343,10 +390,15 @@ def test_which_ask():
     p._games_seen = 4
     check("after four games she wonders about the end",
           p._pool() == END_WONDER)
+
+    # The budget is spent when a line GOES OUT, not when one is chosen — a
+    # signal that failed to build would otherwise burn the session's only ask
+    # with nobody hearing it. So the chooser keeps offering the wondering
+    # until it has actually been said.
+    p.fire()
     check("and then never again this session — an observation repeated is a "
           "nag",
-          [p._pool() for _ in range(3)] == [SUBSCRIBE, FOLLOW, SUBSCRIBE]
-          or END_WONDER not in [p._pool() for _ in range(3)])
+          END_WONDER not in [p._pool() for _ in range(3)])
 
     check("four is the streamer's number", S.PROMO_END_WONDER_AFTER == 4)
     restore()
@@ -419,7 +471,8 @@ def main() -> int:
     test_firing_resets_the_clock()
     test_not_during_a_game()
     test_the_wait_after_a_game()
-    test_two_games_worth()
+    test_one_ask_after_game_two_or_three()
+    test_the_end_question_outranks_a_missed_ask()
     test_a_session_gets_one_of_each()
     test_a_game_ending_is_noticed_without_being_told()
     test_outside_league_only_the_clock_applies()

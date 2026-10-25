@@ -11,16 +11,14 @@ different numbers.
 
     never during a game         he is playing; she is not interrupting it
     1-3 minutes after one ends  the post-game screen, not the instant of defeat
-    two games' worth            a 40-minute game is not a 20-minute one, so a
-                                game counts double past PROMO_LONG_GAME_MINUTES:
-                                two short games earn an ask, one long one earns
-                                it alone
+    ONE ask per session         after the 2nd or the 3rd game, rolled at
+                                startup so it is not the same beat every night
     after 4 games, once         she wonders aloud whether the stream is ending,
                                 instead of asking for anything
 
-Four or five games a session, an ask after the second and the wondering after
-the fourth: one of each, which is about as often as an ask can arrive without
-becoming something people tune out.
+A session is four or five games, so one ask is the whole budget — that is what
+"once per session" means, and it is as often as an ask can arrive without
+becoming something people learn to tune out.
 
 **A variety stream has no games to count, so the clock is the whole rule** —
 once every 50-120 minutes, rolled fresh each time rather than fixed, which is
@@ -81,7 +79,6 @@ class PromoSource:
         self._due = time.time() + self._interval()
         self._turn: dict = {}
         self._games_seen = 0
-        self._games_at_last_promo = 0
         self._last_game_end = 0.0
         self._after_game_wait = self._post_game_delay()
 
@@ -92,6 +89,12 @@ class PromoSource:
         # Once per session. "Are we about to end the stream?" is an
         # observation about the evening, and an observation repeated is a nag.
         self._wondered = False
+
+        # League: one ask, after this many games. Rolled now rather than per
+        # check, so the slot is fixed for the evening instead of being
+        # re-decided every fifteen seconds.
+        self._ask_after = random.choice(settings.PROMO_ASK_AFTER_GAMES)
+        self._asked = False
 
     # -----------------------------------------------------------------
 
@@ -106,23 +109,6 @@ class PromoSource:
 
     def _games(self) -> int:
         return len(self.temper.games) if self.temper else 0
-
-    def _credits(self) -> int:
-        """
-        How much game has gone by since the last ask, in games' worth.
-
-        A forty-minute game is not a twenty-minute one — the streamer's point:
-        two short games earn an ask, and one long game earns it on its own. So
-        a game counts double past `PROMO_LONG_GAME_MINUTES`.
-        """
-        if not self.temper:
-            return 0
-
-        total = 0
-        for game in self.temper.games[self._games_at_last_promo:]:
-            minutes = getattr(game, "minutes", 0.0) or 0.0
-            total += 2 if minutes >= settings.PROMO_LONG_GAME_MINUTES else 1
-        return total
 
     def _watch_games(self) -> None:
         """
@@ -173,10 +159,17 @@ class PromoSource:
             return (f"{self.QUIET}only {waited:.0f}s since the game ended "
                     f"(waiting {self._after_game_wait:.0f}s)")
 
-        credits = self._credits()
-        if credits < settings.PROMO_GAMES_GAP:
-            return (f"{self.QUIET}only {credits} game credit(s) since the "
-                    f"last ask")
+        # The end question outranks a missed ask: on the fourth game, a late
+        # advert is worse than no advert.
+        if not self._wondered and self._games_seen >= settings.PROMO_END_WONDER_AFTER:
+            return ""
+
+        if self._asked:
+            return f"{self.QUIET}she has had her one ask this session"
+
+        if self._games_seen < self._ask_after:
+            return (f"{self.QUIET}waiting for game {self._ask_after} "
+                    f"({self._games_seen} so far)")
 
         return ""
 
@@ -189,7 +182,6 @@ class PromoSource:
         """
         if (settings.LEAGUE_MODE and not self._wondered
                 and self._games_seen >= settings.PROMO_END_WONDER_AFTER):
-            self._wondered = True
             return END_WONDER
 
         pool = self._next_ask
@@ -235,12 +227,21 @@ class PromoSource:
 
         self.queue.push(signal)
         self._due = time.time() + self._interval()
-        self._games_at_last_promo = self._games_seen
+
+        # Spent HERE, not in `_pool`, because this is where a line actually
+        # goes out: a signal that failed to build would otherwise have burned
+        # the session's only ask without anybody hearing it.
+        if signal.context["promo"] == END_WONDER:
+            self._wondered = True
+        else:
+            self._asked = True
 
         print(f"[promo] {signal.context['promo']}: {signal.text[:70]}")
         if settings.LEAGUE_MODE:
-            print(f"[promo]   next after "
-                  f"{settings.PROMO_GAMES_GAP} more game credit(s)")
+            left = ("the end question after game "
+                    f"{settings.PROMO_END_WONDER_AFTER}"
+                    if not self._wondered else "nothing further this session")
+            print(f"[promo]   still to come: {left}")
         else:
             print(f"[promo]   next in "
                   f"{(self._due - time.time()) / 60:.0f} min")
@@ -255,9 +256,10 @@ class PromoSource:
             return
 
         if settings.LEAGUE_MODE:
-            print(f"[promo] Active — League: after "
-                  f"{settings.PROMO_GAMES_GAP} game credit(s), never during "
-                  f"a game, and the clock does not apply")
+            print(f"[promo] Active — League: one ask after game "
+                  f"{self._ask_after}, the end question after game "
+                  f"{settings.PROMO_END_WONDER_AFTER}, never during a game, "
+                  f"and the clock does not apply")
         else:
             print(f"[promo] Active — every "
                   f"{settings.PROMO_MIN_INTERVAL / 60:.0f}-"
