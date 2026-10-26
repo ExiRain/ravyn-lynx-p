@@ -28,6 +28,7 @@ from orchestrator import (game_theme, session_log, temper as temper_engine,
 from orchestrator.champion_notes import ChampionNotes
 from orchestrator.identity import Identity
 from orchestrator.game_angles import NOTE_ANGLES, AngleChooser
+from orchestrator.league_client import LeagueClient, result as client_result
 from orchestrator.game_state import GameState
 from orchestrator.models import Signal
 from orchestrator.priority_queue import SignalQueue
@@ -59,6 +60,9 @@ TEAMFIGHT_MIN_KILLS = 3
 ALLY_DEATH_BURST_WINDOW = 30.0
 
 MULTIKILL_NAMES = {2: "double", 3: "triple", 4: "quadra", 5: "penta"}
+
+# Events about his teammates — the only ones handed her words for them.
+TEAMMATE_EVENTS = frozenset({"AllyKill", "AllyDeath", "Ace", "TeamfightMissed"})
 
 
 EVENT_CONFIG = {
@@ -98,6 +102,14 @@ class LolGameSource:
         # ended without a GameEnd event (nothing dispatched) left both of
         # them believing a game was still running until the next one began.
         self.on_active_change: list = []
+
+        # Who won, for games whose GameEnd never arrived — asked of the League
+        # client after the game. _eog_before is the end-of-game block that
+        # was already there when this game started (the previous game's), so
+        # a stale one is never mistaken for this game's result.
+        self.client = LeagueClient(settings.LEAGUE_LOCKFILE)
+        self._eog_before = None
+        self._result_wanted_until = 0.0
 
         # player identity
         self._player_summoner = ""
@@ -255,6 +267,7 @@ class LolGameSource:
                 # The game-end summary fires here, not in the poll loop: once
                 # the game is gone the loop switches to detection and
                 # _poll_game is never called again.
+                self._maybe_resolve_result()
                 self._maybe_summarise()
                 self._check_for_game()
                 time.sleep(IDLE_INTERVAL)
@@ -314,6 +327,8 @@ class LolGameSource:
         self._last_game_comment = 0.0
 
         self._apply_identity(data)
+        self._result_wanted_until = 0.0
+        self._eog_before = self.client.game_id()
 
         # Scopes the game-end summary to this game rather than to everything
         # since the process started.
@@ -556,6 +571,29 @@ class LolGameSource:
     # polling
     # ---------------------------------------------------------
 
+    def _maybe_resolve_result(self) -> None:
+        """
+        Fill in who won a game that ended without a GameEnd event, from the
+        League client's post-game block. Asked every idle tick until it
+        answers or LEAGUE_RESULT_WAIT runs out; until then the game counts
+        with no result, which is what it was before this existed.
+        """
+        if not self._result_wanted_until:
+            return
+        if time.time() > self._result_wanted_until:
+            print("[lol] The League client never said who won — result "
+                  "stays unknown")
+            self._result_wanted_until = 0.0
+            return
+        block = self.client.eog()
+        if not block or block.get("gameId") == self._eog_before:
+            return              # not posted yet, or still the previous game's
+        won = client_result(block)
+        if won is None:
+            return
+        self._result_wanted_until = 0.0
+        self.temper.resolve_last(won)
+
     def _maybe_summarise(self) -> None:
         """
         The three lines she prints about the game that just ended.
@@ -582,9 +620,11 @@ class LolGameSource:
                 # 2 or 3". The game still happened; who won is unknown, and
                 # is recorded as unknown rather than guessed.
                 if not self._game_recorded:
-                    print("[lol] Ended without a GameEnd event — counted, "
-                          "result unknown")
+                    print("[lol] Ended without a GameEnd event — counted; "
+                          "asking the League client who won")
                     self._record_game(None)
+                    self._result_wanted_until = (time.time()
+                                                 + settings.LEAGUE_RESULT_WAIT)
                 self._set_game_active(False)
                 # Her reaction to the last death is usually still being
                 # spoken when the API goes away — the game ends mid-sentence.
@@ -1184,13 +1224,18 @@ class LolGameSource:
             ctx["situation"] = situation
 
         # What she calls his teammates right now. Hardens with his death count
-        # (orchestrator/tone.py), so the vocabulary escalates in step with her
-        # tone rather than being one fixed list she picks from at random.
-        rank = tone_engine.teammate_rank(self._death_count)
-        words = self._quotes.get("teammates", {}).get("ranks", {}).get(str(rank))
-        if words:
-            ctx["teammate_words"] = list(words)
-            ctx["teammate_rank"] = rank
+        # (orchestrator/tone.py), capped by her temper — none at all while
+        # supportive. Only on events ABOUT his teammates: sent with every
+        # event, "piggies" alone came back 34 times in one session (STATUS.md
+        # §7 notes: whatever rides along verbatim gets echoed).
+        if config_key in TEAMMATE_EVENTS:
+            rank = min(tone_engine.teammate_rank(self._death_count),
+                       self.temper.teammate_rank_cap())
+            words = (self._quotes.get("teammates", {}).get("ranks", {})
+                     .get(str(rank)) if rank else None)
+            if words:
+                ctx["teammate_words"] = list(words)
+                ctx["teammate_rank"] = rank
 
         # Whether his notes exist decides which angles are eligible. The note
         # text itself is attached below, only if a note angle wins.
