@@ -997,7 +997,9 @@ class LolGameSource:
         self.state.record_dragon(side, dragon_type, taker)
 
         seed = self._pick_quote("objectives", "dragon_dismiss")
-        text = f"{subject} took the {dragon_type} dragon. {seed}".strip()
+        tally = _drake_tally(side, len(self.state.ours.dragons),
+                             len(self.state.theirs.dragons))
+        text = f"{subject} took the {dragon_type} dragon{tally}. {seed}".strip()
         # "0 kills but we get an object where was my participation, 50-50
         # praise mock" — the verdict decides, and it differs each time.
         verdict = (tone_engine.read_objective_participation(
@@ -1335,6 +1337,34 @@ class LolGameSource:
 
     def stop(self):
         self._running = False
+
+_ORDINALS = ("first", "second", "third", "fourth", "fifth", "sixth",
+             "seventh", "eighth")
+
+
+def _drake_tally(side: str, ours: int, theirs: int) -> str:
+    """
+    The count, inside the very sentence she reacts to.
+
+    It was only in the SITUATION block, and she said "that makes three" over a
+    situation reading "yours 2, theirs 0" (2026-10-27, game 3) — her own
+    arithmetic, nudged by a seed that said "another dragon" on the first one.
+    Handed the number in the event itself, she has nothing left to count.
+    """
+    def nth(n: int) -> str:
+        return _ORDINALS[n - 1] if 0 < n <= len(_ORDINALS) else f"#{n}"
+
+    def count(n: int) -> str:
+        return "none" if n == 0 else str(n)
+
+    if side == "mine":
+        return (f" — your team's {nth(ours)} drake; "
+                f"they have {count(theirs)}")
+    if side == "enemy":
+        return (f" — their {nth(theirs)} drake; "
+                f"your team has {count(ours)}")
+    return ""       # unattributed: not counted, so no count to state
+
 
 def _shift_tone(tone: str, shift: int) -> str:
     """Move a tone along the ladder. Clamped at both ends."""

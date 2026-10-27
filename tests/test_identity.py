@@ -289,6 +289,52 @@ def _attribution_cases(src, pushed):
           pushed[-1].text if pushed else "nothing pushed")
 
 
+def test_the_drake_count_is_in_the_event():
+    """
+    2026-10-27 game 3: Zed took his team's first drake and she said "another
+    dragon"; he took the second and she said "that makes three". The tally
+    was right (the angles that fired prove 1 then 2-0); she counted for
+    herself, nudged by a seed reading "Another dragon for the collection".
+    """
+    print("\n--- she is handed the drake count, not asked to keep it ---")
+    import json
+    import sources.lol_game as lol
+
+    src = source()
+    src._fetch = real_game
+    src._check_for_game()
+    pushed = []
+    src.queue.push = lambda sig: pushed.append(sig)
+    original = lol.random.random
+    lol.random.random = lambda: 0.0
+    try:
+        def drake(kind, killer, at):
+            src._current_game_time = at
+            src._handle_dragon({"DragonType": kind, "KillerName": killer,
+                                "EventTime": at})
+            return pushed[-1].text if pushed else ""
+
+        first = drake("Hextech", "leesin#RU", 700.0)
+        second = drake("Fire", "leesin#RU", 1000.0)
+        theirs = drake("Ocean", "elise#RU", 1300.0)
+    finally:
+        lol.random.random = original
+
+    check("his team's first drake is called the first",
+          "your team's first drake; they have none" in first, first)
+    check("the second is called the second — not 'three'",
+          "your team's second drake; they have none" in second, second)
+    check("an enemy drake gives both sides from theirs",
+          "their first drake; your team has 2" in theirs, theirs)
+
+    quotes = json.loads((DATA / "game_quotes.json").read_text(encoding="utf-8"))
+    claims = [q for q in quotes["objectives"]["dragon_dismiss"]
+              if any(w in q.lower() for w in ("another", "again", "collection",
+                                              " more"))]
+    check("no dragon seed claims earlier dragons — it is used on the first",
+          not claims, str(claims))
+
+
 def test_every_game_is_counted():
     """
     The 2026-10-25 session: three GameStarts, one GameEnd. Two games ended
@@ -411,6 +457,7 @@ def main():
     test_unknown_side_records_nothing()
     test_who_did_what()
     test_objective_attribution_in_events()
+    test_the_drake_count_is_in_the_event()
     test_every_game_is_counted()
     test_notes_only_reach_note_angles()
 
