@@ -362,6 +362,15 @@ class Settings:
     # and if her next line starts inside it she simply stays — no out-and-in.
     GHOST_LINGER_S = 1.0
 
+    # --- League client (the lobby, not the game) ---
+    # Where the client writes its lockfile. Read only to learn who won a game
+    # whose in-game API went away before reporting it — see
+    # orchestrator/league_client.py.
+    LEAGUE_LOCKFILE = os.getenv(
+        "RAVYN_LEAGUE_LOCKFILE", "C:/Riot Games/League of Legends/lockfile")
+    # How long after a game ends to keep asking the client for its result.
+    LEAGUE_RESULT_WAIT = 180.0
+
     # --- Language ---
     # Ambient: her own idle voice — silence filler, game reactions, promos.
     # Nobody addressed her, so there is nothing to mirror. Keep this fixed;

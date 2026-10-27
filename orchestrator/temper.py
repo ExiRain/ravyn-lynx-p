@@ -95,6 +95,16 @@ HEAT_FACTOR = {
     NEGATIVE: 0.75,
 }
 
+# The harshest teammate vocabulary (data/game_quotes.json "ranks", 1-4) each
+# register allows; 0 means none at all. Without this the words escalated on
+# his death count alone, so a supportive evening still called his team "these
+# bronze hardstucks" — the persona and the vocabulary out-shouted the temper.
+TEAMMATE_RANK_CAP = {
+    SUPPORTIVE: 0,
+    NEUTRAL: 2,
+    NEGATIVE: 4,
+}
+
 # A hard ceiling on consecutive pointed lines, whatever the temper. The
 # measured session ran fifteen in a row; past three or four in a row it stops
 # reading as a character and starts reading as a grudge.
@@ -199,6 +209,22 @@ class Temper:
               f"(kda {result.kda:.1f}) -> {self.points():+.1f} points, "
               f"{register}")
         return register
+
+    def resolve_last(self, won: bool) -> bool:
+        """
+        Fill in the result of the latest game, recorded as unknown because the
+        in-game API went away first. Points are summed on demand, so the
+        register follows immediately. False if there was nothing to fill in.
+        """
+        if not self.games or self.games[-1].won is not None:
+            return False
+        self.games[-1].won = won
+        print(f"[temper] result from the client: {self.games[-1].summary()} "
+              f"-> {self.points():+.1f} points, {self.register()}")
+        return True
+
+    def teammate_rank_cap(self) -> int:
+        return TEAMMATE_RANK_CAP[self.register()]
 
     # -----------------------------------------------------------------
 
