@@ -39,7 +39,13 @@ settings = get_settings()
 
 # Ravyn's system prompt caps her at 2-3 sentences. Anything beyond that is
 # the model ignoring instructions, and speaking it just makes her ramble.
+#
+# Counted in real sentences — a stop followed by a capital. It used to be
+# applied to CHUNKS, after comma and "..." breaks, so three sentences made four
+# or five chunks and the end was cut off: 26 of 191 lines across the October
+# sessions lost their ending, some on a dangling "The numbers don't lie,".
 MAX_SENTENCES = 3
+_SENTENCE_END = re.compile(r'(?<=[.!?])\s+(?=["“\'(]?[A-Z0-9])')
 
 # Fragments shorter than this get glued onto the previous chunk. Cloning TTS
 # renders one- and two-word stubs badly, so this protects voice quality — but
@@ -47,7 +53,13 @@ MAX_SENTENCES = 3
 # again.") merges into a single chunk, so she only starts speaking once the
 # whole line is synthesised. Lower it to stream those, at the cost of
 # artefacts on the stubs. Tune by ear.
-MIN_WORDS_PER_CHUNK = 4
+# Every chunk is its own generation, cloned afresh from the reference wav, and
+# the start of each one sounds like the recording before the model drifts to
+# its own rendition. In a long chunk that is a word; a chunk of three words is
+# almost all of it, so "Hmm... not bad." came out in her recorded voice and the
+# chunk after it in the drifted one — the switch heard on 2026-10-27, where 13
+# of 108 chunks were four words or fewer. Fewer, longer chunks, fewer seams.
+MIN_WORDS_PER_CHUNK = 6
 
 # Time-to-first-audio is just "how long is the first chunk" — she cannot start
 # speaking until chunk 1 is synthesised. So break the opening on its own
@@ -56,8 +68,8 @@ MIN_WORDS_PER_CHUNK = 4
 #
 # Only existing punctuation is used as a break point; splitting mid-clause to
 # hit a word count makes the prosody obviously wrong.
-FIRST_CHUNK_MAX_WORDS = 8   # above this, try to break the opening
-FIRST_CHUNK_MIN_WORDS = 3   # below this, TTS renders stubs badly
+FIRST_CHUNK_MAX_WORDS = 12  # above this, try to break the opening
+FIRST_CHUNK_MIN_WORDS = MIN_WORDS_PER_CHUNK   # ~2.5s of audio, ~0.5s to make
 
 _CLAUSE_BREAK = re.compile(r'(?<=[,;:—–])\s*')
 
@@ -71,29 +83,33 @@ def _clean_for_tts(text: str) -> str:
 
 def split_sentences(text: str) -> list[str]:
     """
-    Split into speakable chunks. Long sentences break on commas; fragments
-    shorter than 4 words get glued onto the previous chunk so TTS never
-    receives a stub like "Right." on its own.
+    Split into speakable chunks. Long sentences break on commas; no chunk is
+    shorter than MIN_WORDS_PER_CHUNK unless the whole line is. A short piece
+    joins the chunk before it — or, at the very start, the one after it: the
+    old rule only looked backwards, so an opening "and honestly," went out
+    on its own.
     """
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    result: list[str] = []
+    text = " ".join(_SENTENCE_END.split(text.strip())[:MAX_SENTENCES])
 
-    for s in sentences:
+    pieces: list[str] = []
+    for s in re.split(r'(?<=[.!?])\s+', text):
         s = s.strip()
         if not s:
             continue
         if len(s.split()) > 20:
-            for part in re.split(r'(?<=,)\s+', s):
-                if result and len(part.split()) < MIN_WORDS_PER_CHUNK:
-                    result[-1] += " " + part
-                else:
-                    result.append(part)
-        elif result and len(s.split()) < MIN_WORDS_PER_CHUNK:
-            result[-1] += " " + s
+            pieces.extend(p for p in re.split(r'(?<=,)\s+', s) if p.strip())
         else:
-            result.append(s)
+            pieces.append(s)
 
-    return _split_first_chunk(result[:MAX_SENTENCES])
+    result: list[str] = []
+    for piece in pieces:
+        if result and (len(piece.split()) < MIN_WORDS_PER_CHUNK
+                       or len(result[-1].split()) < MIN_WORDS_PER_CHUNK):
+            result[-1] += " " + piece
+        else:
+            result.append(piece)
+
+    return _split_first_chunk(result)
 
 
 def _split_first_chunk(chunks: list[str]) -> list[str]:
@@ -121,8 +137,8 @@ def _split_first_chunk(chunks: list[str]) -> list[str]:
     head = " ".join(head_parts).strip()
     rest = " ".join(parts[taken:]).strip()
 
-    if not head or not rest:
-        return chunks
+    if not head or len(rest.split()) < MIN_WORDS_PER_CHUNK:
+        return chunks       # splitting would strand a stub; keep it whole
 
     return [head, rest] + chunks[1:]
 
