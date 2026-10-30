@@ -64,6 +64,14 @@ MULTIKILL_NAMES = {2: "double", 3: "triple", 4: "quadra", 5: "penta"}
 # Events about his teammates — the only ones handed her words for them.
 TEAMMATE_EVENTS = frozenset({"AllyKill", "AllyDeath", "Ace", "TeamfightMissed"})
 
+# Game minutes under which a game is a remake, not a game. The remake vote
+# opens at 3:00 and the earliest surrender is 15:00, so nothing real ends here.
+REMAKE_MINUTES = 5.0
+
+# Moments that must never be dropped for sounding familiar.
+MUST_LAND_EVENTS = frozenset({"GameStart", "GameEnd", "BaronKill"})
+MUST_LAND_ANGLES = frozenset({"dragon_soul_ours", "dragon_soul_theirs"})
+
 
 EVENT_CONFIG = {
     "GameStart":         {"priority": 2, "ttl": None},
@@ -186,11 +194,26 @@ class LolGameSource:
             except Exception as e:
                 print(f"[lol] on_active_change callback failed: {e}")
 
-    def _record_game(self, won: bool | None) -> None:
-        """Once per game, whichever way it ends — promo counts these."""
+    def _is_remake(self) -> bool:
+        """
+        Over before a real game could be. On 2026-10-30 a ~5-minute remake
+        was recorded as a WIN and moved her temper toward supportive; it
+        would also have counted as one of promo's "after game 2 or 3".
+        """
+        return self.state.minutes < REMAKE_MINUTES
+
+    def _record_game(self, won: bool | None) -> bool:
+        """
+        Once per game, whichever way it ends — promo and temper count these.
+        False, and nothing recorded, for a remake.
+        """
         if self._game_recorded:
-            return
+            return False
         self._game_recorded = True
+        if self._is_remake():
+            print(f"[lol] Game lasted {self.state.minutes:.1f} min — a "
+                  f"remake; not counted for temper or promo")
+            return False
         self.temper.record_game(temper_engine.GameResult(
             won=won,
             kills=self.state.kills,
@@ -199,6 +222,7 @@ class LolGameSource:
             minutes=self.state.minutes,
             champion=self.state.champion or self._player_champion or "",
         ))
+        return True
 
     def _load_quotes(self, path: Path) -> dict:
         if not path.exists():
@@ -622,9 +646,9 @@ class LolGameSource:
                 if not self._game_recorded:
                     print("[lol] Ended without a GameEnd event — counted; "
                           "asking the League client who won")
-                    self._record_game(None)
-                    self._result_wanted_until = (time.time()
-                                                 + settings.LEAGUE_RESULT_WAIT)
+                    if self._record_game(None):
+                        self._result_wanted_until = (
+                            time.time() + settings.LEAGUE_RESULT_WAIT)
                 self._set_game_active(False)
                 # Her reaction to the last death is usually still being
                 # spoken when the API goes away — the game ends mid-sentence.
@@ -680,6 +704,12 @@ class LolGameSource:
             if self._kill_buffer:
                 self._flush_kills()
             won = event.get("Result", "") == "Win"
+
+            # A remake is not a win or a loss: no cheer, no verdict, no count.
+            if self._is_remake():
+                self._record_game(won)
+                self._set_game_active(False)
+                return
 
             # Two signals, in this order and on purpose.
             #
@@ -912,6 +942,9 @@ class LolGameSource:
         if killer_champion:
             text += f" Killed by {killer_champion}."
         text += traded
+        # Handed to her, like the drake count: on 2026-10-30 she called his
+        # sixth death "the third death of this match".
+        text += f" That is his {_nth(self._death_count)} death this game."
 
         self._push_event("MyDeath", text, event, "MyDeath",
             verdict=verdict,
@@ -1263,6 +1296,13 @@ class LolGameSource:
             ctx["angle"] = angle.instruction
             ctx["angle_id"] = angle.id
 
+        # The notebook's repeat check retries a line that echoes an earlier
+        # one and drops it if the retry echoes too. Fine for an ally kill; on
+        # 2026-10-30 it silenced "they just took soul". These always speak.
+        if (config_key in MUST_LAND_EVENTS
+                or (angle is not None and angle.id in MUST_LAND_ANGLES)):
+            ctx["must_land"] = True
+
         # His own notes travel separately from the measured facts, labelled as
         # his. §7: she may repeat what he told her, never extend it into a
         # read of her own — and only when the line is about the notes.
@@ -1339,7 +1379,11 @@ class LolGameSource:
         self._running = False
 
 _ORDINALS = ("first", "second", "third", "fourth", "fifth", "sixth",
-             "seventh", "eighth")
+             "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth")
+
+
+def _nth(n: int) -> str:
+    return _ORDINALS[n - 1] if 0 < n <= len(_ORDINALS) else f"number {n}"
 
 
 def _drake_tally(side: str, ours: int, theirs: int) -> str:
@@ -1351,17 +1395,14 @@ def _drake_tally(side: str, ours: int, theirs: int) -> str:
     arithmetic, nudged by a seed that said "another dragon" on the first one.
     Handed the number in the event itself, she has nothing left to count.
     """
-    def nth(n: int) -> str:
-        return _ORDINALS[n - 1] if 0 < n <= len(_ORDINALS) else f"#{n}"
-
     def count(n: int) -> str:
         return "none" if n == 0 else str(n)
 
     if side == "mine":
-        return (f" — your team's {nth(ours)} drake; "
+        return (f" — your team's {_nth(ours)} drake; "
                 f"they have {count(theirs)}")
     if side == "enemy":
-        return (f" — their {nth(theirs)} drake; "
+        return (f" — their {_nth(theirs)} drake; "
                 f"your team has {count(ours)}")
     return ""       # unattributed: not counted, so no count to state
 

@@ -335,6 +335,73 @@ def test_the_drake_count_is_in_the_event():
           not claims, str(claims))
 
 
+def test_remakes_and_counts_from_2026_10_30():
+    """
+    2026-10-30: a ~5-minute remake was recorded as a WIN (temper +2); his
+    sixth death was called "the third death of this match"; "they just took
+    soul" was dropped as a repeat.
+    """
+    print("\n--- remakes do not count, counts are handed over, soul lands ---")
+    import sources.lol_game as lol
+    from orchestrator.temper import Temper
+
+    # A remake whose API vanished.
+    temper = Temper()
+    src = LolGameSource(SignalQueue(), DATA, temper=temper)
+    src._fetch = lambda: real_game(t=200.0)       # 3m20s of game time
+    src._check_for_game()
+    src._poll_game()
+    src._fetch = lambda: None
+    src._poll_game()
+    check("a remake is not counted for temper or promo", temper.games == [],
+          str(temper.games))
+    check("and the client is not asked who won it",
+          src._result_wanted_until == 0.0)
+
+    # A remake that did deliver GameEnd.
+    pushed = []
+    src = LolGameSource(SignalQueue(), DATA, temper=temper)
+    src.queue.push = lambda sig: pushed.append(sig)
+    src._fetch = lambda: real_game(t=200.0)
+    src._check_for_game()
+    src._poll_game()
+    pushed.clear()
+    src._handle_event({"EventName": "GameEnd", "Result": "Win"},
+                      real_game(t=200.0))
+    check("a remake's GameEnd: no cheer, no line, no count",
+          pushed == [] and temper.games == [] and not src.is_game_active,
+          str([s.text for s in pushed]))
+
+    # His death count, in the event.
+    src = source()
+    src._fetch = real_game
+    src._check_for_game()
+    pushed = []
+    src.queue.push = lambda sig: pushed.append(sig)
+    original = lol.random.random
+    lol.random.random = lambda: 0.0
+    try:
+        for i in range(6):
+            src._current_game_time = 1500.0 + i * 120
+            src._handle_champion_kill({
+                "KillerName": "darius#RU", "VictimName": "Серый Экран#RU",
+                "Assisters": [], "EventTime": src._current_game_time})
+        deaths = [s.text for s in pushed if s.context.get("config_key") == "MyDeath"]
+        src._current_game_time = 2500.0
+        src._handle_baron({"KillerName": "elise#RU", "Assisters": [],
+                           "EventTime": 2500.0})
+    finally:
+        lol.random.random = original
+
+    check("his deaths are pushed", len(deaths) >= 2, str(len(deaths)))
+    check("the sixth is called the sixth",
+          any("That is his sixth death this game." in t for t in deaths),
+          deaths[-1] if deaths else "")
+    baron = [s for s in pushed if s.context.get("config_key") == "BaronKill"]
+    check("Baron is flagged must_land, so no repeat check silences it",
+          baron and baron[-1].context.get("must_land") is True)
+
+
 def test_every_game_is_counted():
     """
     The 2026-10-25 session: three GameStarts, one GameEnd. Two games ended
@@ -458,6 +525,7 @@ def main():
     test_who_did_what()
     test_objective_attribution_in_events()
     test_the_drake_count_is_in_the_event()
+    test_remakes_and_counts_from_2026_10_30()
     test_every_game_is_counted()
     test_notes_only_reach_note_angles()
 

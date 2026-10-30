@@ -117,6 +117,12 @@ def test_the_cap_counts_sentences_not_chunks():
     check("and the line ends on a sentence, never a comma",
           spoken.rstrip()[-1] in ".!?", spoken[-40:])
 
+    mundo = ("You trade one life for another, yet the scoreboard stays "
+             "where it was... hah. Dr. Mundo walks away smiling.")
+    spoken = " ".join(rl.split_sentences(mundo))
+    check("'Dr. Mundo' is a name, not a sentence end (2026-10-30: '...hah. Dr.')",
+          spoken.endswith("Dr. Mundo walks away smiling."), spoken[-40:])
+
     trailing = ("Senna down to Hwei... that's two gone now. Bleeding. "
                 "Six minutes in.")
     check("'...' followed by lowercase is a pause, not a sentence end",

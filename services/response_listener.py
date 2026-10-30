@@ -45,7 +45,12 @@ settings = get_settings()
 # or five chunks and the end was cut off: 26 of 191 lines across the October
 # sessions lost their ending, some on a dangling "The numbers don't lie,".
 MAX_SENTENCES = 3
-_SENTENCE_END = re.compile(r'(?<=[.!?])\s+(?=["“\'(]?[A-Z0-9])')
+# Not after a title: "Dr. Mundo" is a champion, and on 2026-10-30 a line was
+# cut after "...hah. Dr." because the stop in "Dr." ended the sentence.
+_NOT_AFTER_TITLE = r'(?<!\bDr\.)(?<!\bMr\.)(?<!\bMs\.)(?<!\bSt\.)(?<!\bMrs\.)(?<!\bvs\.)'
+_SENTENCE_END = re.compile(
+    _NOT_AFTER_TITLE + r'(?<=[.!?])\s+(?=["“\'(]?[A-Z0-9])')
+_PIECE_END = re.compile(_NOT_AFTER_TITLE + r'(?<=[.!?])\s+')
 
 # Fragments shorter than this get glued onto the previous chunk. Cloning TTS
 # renders one- and two-word stubs badly, so this protects voice quality — but
@@ -92,7 +97,7 @@ def split_sentences(text: str) -> list[str]:
     text = " ".join(_SENTENCE_END.split(text.strip())[:MAX_SENTENCES])
 
     pieces: list[str] = []
-    for s in re.split(r'(?<=[.!?])\s+', text):
+    for s in _PIECE_END.split(text):
         s = s.strip()
         if not s:
             continue
