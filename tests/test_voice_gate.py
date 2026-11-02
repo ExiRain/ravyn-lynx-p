@@ -207,7 +207,9 @@ class _Channel:
 
 CHANNEL = _Channel()
 
-TWO_CHUNKS = "First line here for you. Second line follows along nicely."
+# Each sentence at least MIN_WORDS_PER_CHUNK words, or the splitter merges them.
+TWO_CHUNKS = ("First line here for you to hear. "
+              "Second line follows along very nicely.")
 
 
 def deliver(gate, priority, text=TWO_CHUNKS):

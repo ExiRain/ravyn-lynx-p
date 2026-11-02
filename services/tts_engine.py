@@ -104,11 +104,14 @@ class QwenTTSEngine(TTSEngine):
     """
 
     def __init__(self, device="cuda", voice_ref=None, model_id="",
-                 ref_text="", attn_implementation="sdpa"):
+                 ref_text="", attn_implementation="sdpa",
+                 temperature=0.9, top_k=50):
         super().__init__(device=device, voice_ref=voice_ref)
         self.model_id = model_id
         self.ref_text = ref_text
         self.attn_implementation = attn_implementation
+        self.temperature = temperature
+        self.top_k = top_k
         self.is_fast = False
         self._clone_prompt = None
 
@@ -148,15 +151,19 @@ class QwenTTSEngine(TTSEngine):
 
         # Build the reference conditioning once. We generate sentence by
         # sentence, so recomputing the reference features on every call would
-        # pay that cost several times per line.
-        try:
-            self._clone_prompt = self.model.create_voice_clone_prompt(
-                ref_audio=self.voice_ref, ref_text=self.ref_text)
-            print("[tts] Voice clone prompt cached")
-        except Exception as e:
-            print(f"[tts] Could not cache clone prompt ({e}) — "
-                  f"passing the reference on every call instead")
-            self._clone_prompt = None
+        # pay that cost several times per line. faster-qwen3-tts has no
+        # create_voice_clone_prompt and caches the reference itself, keyed on
+        # path and transcript — asking it here only printed a failure on
+        # every start.
+        self._clone_prompt = None
+        if not self.is_fast:
+            try:
+                self._clone_prompt = self.model.create_voice_clone_prompt(
+                    ref_audio=self.voice_ref, ref_text=self.ref_text)
+                print("[tts] Voice clone prompt cached")
+            except Exception as e:
+                print(f"[tts] Could not cache clone prompt ({e}) — "
+                      f"passing the reference on every call instead")
 
         self._loaded = True
         print(f"[tts] Loaded in {time.time() - t0:.1f}s")
@@ -173,7 +180,8 @@ class QwenTTSEngine(TTSEngine):
 
         language = QWEN_LANGUAGES.get(lang, "English")
 
-        kwargs = {"text": text, "language": language}
+        kwargs = {"text": text, "language": language,
+                  "temperature": self.temperature, "top_k": self.top_k}
         if self._clone_prompt is not None:
             kwargs["voice_clone_prompt"] = self._clone_prompt
         else:
@@ -258,6 +266,8 @@ def build_engine(settings) -> TTSEngine:
             model_id=settings.TTS_QWEN_MODEL,
             ref_text=settings.TTS_QWEN_REF_TEXT,
             attn_implementation=getattr(settings, "TTS_QWEN_ATTN", "sdpa"),
+            temperature=getattr(settings, "TTS_QWEN_TEMPERATURE", 0.9),
+            top_k=getattr(settings, "TTS_QWEN_TOP_K", 50),
         )
 
     if backend == "chatterbox":

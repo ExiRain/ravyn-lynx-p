@@ -400,6 +400,7 @@ def test_cheer_and_boo():
         source.temper.nudge = -10.0
         source._player_summoner, source._player_champion = "exiled", "Riven"
         source._current_game_time = 2100.0
+        source.state.game_time = 2100.0     # a real game, not a remake
         source._last_game_comment = source._current_game_time   # gap wide open
         source._handle_event({"EventName": "GameEnd",
                               "Result": "Win" if won else "Lose"}, {})
@@ -439,6 +440,7 @@ def test_cheer_and_boo():
     source = LolGameSource(queue, data)
     source._player_summoner = "exiled"
     source._current_game_time = 2100.0
+    source.state.game_time = 2100.0           # a real game, not a remake
     source._last_game_comment = 2100.0        # she spoke this instant
     source._reaction_log = {"GameCheer": [2100.0] * 5}
     source._handle_event({"EventName": "GameEnd", "Result": "Win"}, {})

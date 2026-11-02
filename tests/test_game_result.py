@@ -86,6 +86,7 @@ def ended_without_gameend(temper: Temper) -> LolGameSource:
     src = LolGameSource(SignalQueue(), DATA, temper=temper)
     src.client = FakeClient()
     src._eog_before = src.client.game_id()
+    src.state.game_time = 1800.0        # a real game, not a remake
     src._record_game(None)
     src._result_wanted_until = time.time() + 60
     return src

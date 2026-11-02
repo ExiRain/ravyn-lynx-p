@@ -460,6 +460,13 @@ class Settings:
     # "sdpa" works everywhere torch does. "flash_attention_2" is faster but
     # flash-attn is painful to build on Windows — only set it if you have it.
     TTS_QWEN_ATTN = "sdpa"
+
+    # Sampling for her voice — the library defaults, made visible. Lower is a
+    # steadier voice that stays closer to the reference wav through a long
+    # sentence; too low turns flat and robotic. The lever to try (0.7, then
+    # 0.6) if she still drifts away from her recorded voice mid-sentence.
+    TTS_QWEN_TEMPERATURE = 0.9
+    TTS_QWEN_TOP_K = 50
     AUDIO_SERVER_HOST = "0.0.0.0"
     AUDIO_SERVER_PORT = 9000                # Godot connects to ws://localhost:9000/ws/audio
 
