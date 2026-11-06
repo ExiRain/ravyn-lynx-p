@@ -26,7 +26,9 @@ The rest are switches for debugging, not modes:
     python -m app.main --no-tts       # silent — log her lines, no audio
     python -m app.main --no-voice     # disable the voice gate (VAD)
     python -m app.main --no-hear      # keep the gate, but do not transcribe
-    python -m app.main --no-twitch    # no chat
+    python -m app.main --no-twitch    # no Twitch chat
+    python -m app.main --no-youtube   # no YouTube chat (off anyway without
+                                       # RAVYN_YT_API_KEY)
     python -m app.main --no-alerts    # no StreamElements polling
     python -m app.main --no-promo     # she never asks for a follow or a sub
     python -m app.main --test         # mock sources
@@ -56,6 +58,7 @@ from sources.silence_filler import SilenceFiller
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 TEST_MODE = "--test" in sys.argv
 NO_TWITCH = "--no-twitch" in sys.argv
+NO_YOUTUBE = "--no-youtube" in sys.argv
 NO_TTS = "--no-tts" in sys.argv
 NO_ALERTS = "--no-alerts" in sys.argv
 NO_PROMO = "--no-promo" in sys.argv
@@ -93,6 +96,12 @@ def main():
     print(f"  Rabbit: {settings.RABBIT_HOST}:{settings.RABBIT_PORT}")
     if not NO_TWITCH and not TEST_MODE:
         print(f"  Twitch: #{settings.TWITCH_CHANNEL}")
+    if not NO_YOUTUBE and not TEST_MODE:
+        print("  YouTube: " + (
+            "chat on" + ("  (API fallback ready)" if settings.YT_API_KEY
+                         else "")
+            if settings.YT_CHANNEL_ID or settings.YT_VIDEO_ID
+            else "off (no RAVYN_YT_CHANNEL_ID)"))
     print(f"  Mode: {'League' if LEAGUE else 'variety'}"
           + ("  + ghost" if GHOST else ""))
     if not NO_ALERTS and not TEST_MODE:
@@ -232,11 +241,26 @@ def main():
         alerts = StreamElementsSource(queue, DATA_DIR)
         Thread(target=alerts.run, daemon=True, name="stream-elements").start()
 
-    # --- Twitch ---
+    # --- Chat: Twitch and YouTube, one room ---
+    # Both only read; the room scores and picks ONE message per window across
+    # both, so two live chats do not make her answer twice as often.
+    room = None
     if not NO_TWITCH and not TEST_MODE:
         from sources.twitch_chat import TwitchChatSource
         twitch = TwitchChatSource(queue, identity=identity)
+        room = twitch
         Thread(target=twitch.run, daemon=True, name="twitch-chat").start()
+
+    if not NO_YOUTUBE and not TEST_MODE:
+        from sources.chat_room import ChatRoom
+        from sources.youtube_chat import YouTubeChatSource
+        from sources.youtube_web_chat import YouTubeWebChat
+        room = room or ChatRoom(queue, identity=identity)
+        # No key needed; the API reader is only a fallback, and only if a
+        # key is set, for when YouTube's web format changes under us.
+        fallback = YouTubeChatSource(room) if settings.YT_API_KEY else None
+        youtube = YouTubeWebChat(room, fallback=fallback)
+        Thread(target=youtube.run, daemon=True, name="youtube-chat").start()
 
     # --- Mock ---
     if TEST_MODE:
