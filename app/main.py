@@ -97,8 +97,11 @@ def main():
     if not NO_TWITCH and not TEST_MODE:
         print(f"  Twitch: #{settings.TWITCH_CHANNEL}")
     if not NO_YOUTUBE and not TEST_MODE:
-        print("  YouTube: " + ("chat on" if settings.YT_API_KEY
-                               else "off (no RAVYN_YT_API_KEY)"))
+        print("  YouTube: " + (
+            "chat on" + ("  (API fallback ready)" if settings.YT_API_KEY
+                         else "")
+            if settings.YT_CHANNEL_ID or settings.YT_VIDEO_ID
+            else "off (no RAVYN_YT_CHANNEL_ID)"))
     print(f"  Mode: {'League' if LEAGUE else 'variety'}"
           + ("  + ghost" if GHOST else ""))
     if not NO_ALERTS and not TEST_MODE:
@@ -251,8 +254,12 @@ def main():
     if not NO_YOUTUBE and not TEST_MODE:
         from sources.chat_room import ChatRoom
         from sources.youtube_chat import YouTubeChatSource
+        from sources.youtube_web_chat import YouTubeWebChat
         room = room or ChatRoom(queue, identity=identity)
-        youtube = YouTubeChatSource(room)
+        # No key needed; the API reader is only a fallback, and only if a
+        # key is set, for when YouTube's web format changes under us.
+        fallback = YouTubeChatSource(room) if settings.YT_API_KEY else None
+        youtube = YouTubeWebChat(room, fallback=fallback)
         Thread(target=youtube.run, daemon=True, name="youtube-chat").start()
 
     # --- Mock ---

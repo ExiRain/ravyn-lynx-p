@@ -249,31 +249,38 @@ class Settings:
     DONATION_PRIORITY = 1
     ALERT_PRIORITY = 2
 
-    # --- YouTube chat --- (sources/youtube_chat.py)
-    # Read-only, through the YouTube Data API v3. The key is read from the
-    # environment and never stored here: this file is committed to a public
-    # repo. A Google Cloud API key with "YouTube Data API v3" enabled:
+    # --- YouTube chat ---
+    # Read-only. Only the channel id is needed: chat is read the way the
+    # browser's chat popout reads it (sources/youtube_web_chat.py) — no key,
+    # no quota, a few seconds' delay.
+    #
+    #   permanently:   setx RAVYN_YT_CHANNEL_ID "UC..."
+    #
+    # Your channel id starts with "UC" and is shown at
+    # youtube.com/account_advanced. Not a secret. It finds whichever stream of
+    # yours is live, and it is how she knows a message is yours.
+    YT_CHANNEL_ID = _env("RAVYN_YT_CHANNEL_ID", "")
+    # Seconds between chat reads, at most. YouTube suggests up to 10.
+    YT_WEB_POLL = 4.0
+
+    # OPTIONAL fallback. Those web endpoints are not a published API, so a
+    # change on YouTube's side can break them; with a key set, she switches to
+    # the official API reader (sources/youtube_chat.py) instead of going deaf.
+    # A Google Cloud API key with "YouTube Data API v3" enabled, environment
+    # only — this file is committed to a public repo:
     #
     #   permanently:   setx RAVYN_YT_API_KEY "..."
-    #
-    # Without it, or without a channel id, YouTube chat stays off and Twitch
-    # carries on alone.
     YT_API_KEY = _env("RAVYN_YT_API_KEY", "")
-    # Your channel id — starts with "UC", shown at youtube.com/account_advanced.
-    # Not a secret. Used to find whichever stream of yours is live right now.
-    YT_CHANNEL_ID = _env("RAVYN_YT_CHANNEL_ID", "")
     # Optional: one specific live video id, which skips the lookup entirely.
     YT_VIDEO_ID = _env("RAVYN_YT_VIDEO_ID", "")
 
-    # Quota. The free daily quota is 10,000 units and every chat read costs 5,
-    # so polling as often as YouTube suggests (a few seconds) would run out in
-    # a couple of hours. At one read per 12s it is 1,500 units an hour —
-    # about six hours of chat a day. Lower it for snappier chat, at the cost of
-    # running out sooner; a message waits at most this long before she sees it.
-    YT_MIN_POLL = 12.0
-    # While you are not live on YouTube: a cheap check (2 units) this often…
+    # While you are not live on YouTube, how often to check (both readers).
     YT_LOOKUP_INTERVAL = 60.0
-    # …and, if that finds nothing, a search (100 units) no more often than this.
+
+    # API fallback only. The free daily quota is 10,000 units and every chat
+    # read costs 5, so at one read per 12s it is 1,500 units an hour — about
+    # six hours of chat a day. A search for the live stream costs 100.
+    YT_MIN_POLL = 12.0
     YT_SEARCH_INTERVAL = 1800.0
 
     # --- StreamElements (alerts and donations) ---
