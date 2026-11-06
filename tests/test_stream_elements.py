@@ -205,6 +205,19 @@ def test_alert_types():
          "data": {"username": "NewViewer_123"}}))[0]
     check("a follower is greeted", "NewViewer" in follow, follow)
 
+    # What StreamElements actually sends. "follower" alone silently dropped
+    # every real follow on 2026-11-06.
+    queue = SignalQueue()
+    real = source(queue)
+    sig = real._handle({"_id": "f-real", "type": "follow", "provider": "twitch",
+                        "data": {"username": "momoelvie",
+                                 "displayName": "momoelvie"}})
+    check("a real 'follow' activity is spoken", sig is not None
+          and "momoelvie" in sig.text, str(sig))
+    check("at alert priority, never expiring", sig is not None
+          and sig.priority == S.ALERT_PRIORITY and sig.ttl is None)
+    check("and it is in the queue", queue.pop() is sig)
+
     cheer = s.compose(s._parse_activity(
         {"_id": "c1", "type": "cheer",
          "data": {"username": "BitLord", "amount": 500}}))[0]
@@ -245,8 +258,8 @@ def test_the_signal():
     check("at the top priority", signal.priority == S.DONATION_PRIORITY)
     check("as a quote — no model, ever",
           signal.mode == "quote" and signal.skip_llm is True)
-    check("it expires rather than thanking them two minutes late",
-          signal.ttl == S.SE_TTL)
+    check("it never expires — every donor is thanked",
+          signal.ttl is None and S.SE_TTL is None)
     check("it carries the donation, for the notebook's donor note",
           signal.context["donation"] == {"amount": 5.0, "currency": "$"})
     check("and the name, so the note lands on the right person",

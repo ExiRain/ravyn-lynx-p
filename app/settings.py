@@ -306,9 +306,12 @@ class Settings:
     SE_POLL_INTERVAL = 4.0          # seconds between checks
     SE_LOOKBACK_MINUTES = 10        # how far back a poll looks
 
-    # A thank-you that arrives two minutes late is worse than none: the moment
-    # it belonged to is over and the viewer has gone.
-    SE_TTL = 90.0
+    # None = never expires. A follower, sub or donation is someone the
+    # streamer wants greeted, every time: a thank-you that waits behind a
+    # multikill is fine, one that silently ages out of the queue is not.
+    # Priority (ALERT_PRIORITY / DONATION_PRIORITY) already puts them at the
+    # front and lets them through the voice gate.
+    SE_TTL = None
 
     # She finishes the sentence she is on, then hands the floor over if
     # something more important arrived while she was talking. Checked between

@@ -73,6 +73,19 @@ API = "https://api.streamelements.com/kappa/v2"
 TIP = "tip"
 ALERT_TYPES = ("subscriber", "follower", "cheer", "raid", "host")
 
+# What the feed actually calls each type, mapped to the names used here.
+# StreamElements sends a follow as "follow" (docs.streamelements.com, channel
+# activities). Only "follower" was accepted, so every real follow was parsed,
+# found not to be an alert type, and silently dropped — on 2026-11-06 a new
+# follower was never greeted. Both spellings are kept for anything older.
+TYPE_ALIASES = {
+    "follow": "follower",
+    "sub": "subscriber",
+    "subscription": "subscriber",
+    "resub": "subscriber",
+    "donation": "tip",
+}
+
 # How many activity ids to remember, so a restart or an overlapping poll
 # window cannot read the same donation twice. Generous: a raid can produce a
 # burst, and the cost is a few hundred short strings.
@@ -197,6 +210,7 @@ class StreamElementsSource:
         kind = str(activity.get("type") or activity.get("event") or "").lower()
         if not kind:
             return None
+        kind = TYPE_ALIASES.get(kind, kind)
 
         if kind not in self._logged_types:
             self._logged_types.add(kind)
@@ -303,8 +317,8 @@ class StreamElementsSource:
             text=text,
             mode="quote",
             skip_llm=True,
-            # A thank-you that arrives two minutes late is worse than none:
-            # the moment it belonged to is over and the viewer has gone.
+            # None: a follow, sub or tip is never allowed to age out of the
+            # queue. See SE_TTL.
             ttl=settings.SE_TTL,
             lang=settings.LANG_AMBIENT,
             context=context,
@@ -325,6 +339,7 @@ class StreamElementsSource:
             self._seen_set = set(self._seen)
 
         if event["type"] != TIP and event["type"] not in ALERT_TYPES:
+            print(f"[se] Ignoring activity type {event['type']!r}")
             return None
 
         if not announce:
