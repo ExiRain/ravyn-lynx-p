@@ -258,8 +258,11 @@ def main():
         room = room or ChatRoom(queue, identity=identity)
         # No key needed; the API reader is only a fallback, and only if a
         # key is set, for when YouTube's web format changes under us.
-        fallback = YouTubeChatSource(room) if settings.YT_API_KEY else None
-        youtube = YouTubeWebChat(room, fallback=fallback)
+        # Super Chats and memberships are thanked through the alerts path
+        # (sanitised, quote-only); --no-alerts turns them off with the rest.
+        fallback = (YouTubeChatSource(room, alerts=alerts)
+                    if settings.YT_API_KEY else None)
+        youtube = YouTubeWebChat(room, fallback=fallback, alerts=alerts)
         Thread(target=youtube.run, daemon=True, name="youtube-chat").start()
 
     # --- Mock ---

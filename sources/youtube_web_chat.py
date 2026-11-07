@@ -105,8 +105,12 @@ def next_continuation(cont: dict) -> tuple[str, float]:
 class YouTubeWebChat:
 
     def __init__(self, room, channel_id: str | None = None,
-                 video_id: str | None = None, fallback=None, session=None):
+                 video_id: str | None = None, fallback=None, session=None,
+                 alerts=None):
         self.room = room
+        # Where Super Chats and memberships go: a StreamElementsSource, whose
+        # push_external sanitises and speaks them. None = not thanked.
+        self.alerts = alerts
         self.channel = (settings.YT_CHANNEL_ID if channel_id is None
                         else channel_id)
         self.video_override = (settings.YT_VIDEO_ID if video_id is None
@@ -266,10 +270,15 @@ class YouTubeWebChat:
             self._primed = True
             for msg in self._text_messages(actions):
                 self._remember(msg.get("id"))
+            for event in self._paid_events(actions):
+                self._remember(event["id"])
             print(f"[youtube] Joined chat — earlier messages skipped")
         else:
             for msg in self._text_messages(actions):
                 self._handle(msg)
+            for event in self._paid_events(actions):
+                if self._remember(event["id"]) and self.alerts is not None:
+                    self.alerts.push_external(event)
 
         self._token = token
         return max(1.5, min(wait or settings.YT_WEB_POLL,
@@ -284,6 +293,19 @@ class YouTubeWebChat:
             msg = item.get("liveChatTextMessageRenderer")
             if msg:
                 out.append(msg)
+        return out
+
+    @staticmethod
+    def _paid_events(actions: list) -> list[dict]:
+        """Super Chats, stickers, memberships, gifts — see youtube_alerts."""
+        from sources.youtube_alerts import from_web_item
+        out = []
+        for action in actions:
+            item = ((action.get("addChatItemAction") or {}).get("item")
+                    or {})
+            event = from_web_item(item)
+            if event is not None:
+                out.append(event)
         return out
 
     def _remember(self, msg_id) -> bool:

@@ -51,6 +51,18 @@ STALE_THRESHOLD = 10.0       # seconds in game time — older events dropped at 
 # utterance, short enough to land while the post-game screen is still up.
 SUMMARY_GRACE = 20.0
 
+# Polls in a row the API must fail before the game counts as over. One timeout
+# during the nexus explosion was enough to end the game, so its GameEnd event
+# was never read — and when the API answered again, the same game was
+# "detected" as a new one.
+GONE_AFTER_MISSES = 3
+
+# A game that ended without a GameEnd event still gets her end-of-game line:
+# with the result, as soon as the League client posts it, or without one after
+# this many seconds. Before, she said nothing at all — 6 of 7 games across the
+# 2026-11-02 and 11-06 sessions.
+END_LINE_WAIT = 45.0
+
 TEAMFIGHT_WINDOW = 8.0
 TEAMFIGHT_MIN_KILLS = 3
 
@@ -69,7 +81,12 @@ TEAMMATE_EVENTS = frozenset({"AllyKill", "AllyDeath", "Ace", "TeamfightMissed"})
 REMAKE_MINUTES = 5.0
 
 # Moments that must never be dropped for sounding familiar.
-MUST_LAND_EVENTS = frozenset({"GameStart", "GameEnd", "BaronKill"})
+MUST_LAND_EVENTS = frozenset({"GameStart", "GameEnd", "BaronKill", "Ace"})
+# Live Client events deliberately not reacted to. FirstBlood arrives as a
+# ChampionKill as well; the rest are timers and markers.
+IGNORED_EVENTS = frozenset({"GameStart", "MinionsSpawning", "FirstBlood",
+                            "FirstBrick", "InhibRespawningSoon",
+                            "InhibRespawned"})
 MUST_LAND_ANGLES = frozenset({"dragon_soul_ours", "dragon_soul_theirs"})
 
 
@@ -131,6 +148,17 @@ class LolGameSource:
         self._my_names: set[str] = set()
         self._has_real_enemies = False
         self._waiting_logged = False
+
+        # Ending. _misses counts failed polls in a row (GONE_AFTER_MISSES).
+        # _ended_at is the game time a GameEnd was read at: while the API is
+        # still up on the post-game screen it is the SAME game, not a new one
+        # — on 2026-11-06 22:22 it was re-detected and counted twice.
+        # _end_line_due is set when a game ended without a GameEnd and her
+        # end-of-game line is still owed.
+        self._misses = 0
+        self._ended_at = None
+        self._end_line_due = 0.0
+        self._unhandled_logged: set[str] = set()
 
         # kill coalescing
         self._kill_buffer: list[str] = []
@@ -318,7 +346,16 @@ class LolGameSource:
         """
         data = self._fetch()
         if data is None:
+            self._ended_at = None       # gone: the next answer is a new game
             return
+
+        # Still the game a GameEnd just ended — the post-game screen keeps
+        # the API up. A new game starts from zero, so its clock is behind.
+        if self._ended_at is not None:
+            clock = (data.get("gameData") or {}).get("gameTime", 0) or 0
+            if clock >= self._ended_at - 5:
+                return
+            self._ended_at = None
 
         if not self._identity_resolves(data):
             # Loading screen, or a snapshot that arrived half-built. Say so
@@ -331,6 +368,10 @@ class LolGameSource:
 
         self._waiting_logged = False
         self._game_recorded = False
+        self._misses = 0
+        # A new game already: a line about the last one would land on top of
+        # this one's start, so it is let go.
+        self._end_line_due = 0.0
         self._set_game_active(True)
         self._game_start_pushed = False
         self._last_event_index = 0
@@ -515,6 +556,39 @@ class LolGameSource:
                   f"history={bool(self._read.champion_history)} "
                   f"offrole={self._read.offrole}")
 
+    def _speak_end(self, won: bool | None, event: dict | None = None) -> None:
+        """
+        Cheer or boo, then her line about the game.
+
+        Two signals, in this order and on purpose. The cheer goes first as a
+        QUOTE — no LLM — so the noise lands while the screen is still grey
+        instead of three seconds later. Her actual line follows as an ordinary
+        GameEnd, and the dispatcher's busy flag keeps that order.
+
+        `won` None — the result never came through — skips the cheer, which
+        would be a guess, and still says something about the game.
+        """
+        if won is None:
+            self._push_event("GameEnd", "The game is over.", event or {},
+                             "GameEnd")
+            return
+        self._push_cheer(won)
+        seed = self._pick_quote("game_state",
+                                "game_win" if won else "game_loss")
+        self._push_event("GameEnd", seed or "Game over.", event or {},
+                         "GameEnd", extra_context={"won": won})
+
+    def _maybe_speak_end(self, won: bool | None = None) -> None:
+        """Pay the end-of-game line a GameEnd event never triggered."""
+        if not self._end_line_due:
+            return
+        if won is None and time.time() < self._end_line_due:
+            return
+        self._end_line_due = 0.0
+        print(f"[lol] End-of-game line, late — result "
+              f"{'unknown' if won is None else ('win' if won else 'loss')}")
+        self._speak_end(won)
+
     def _push_cheer(self, won: bool) -> None:
         """
         The immediate reaction to the result — cheer or boo, spoken verbatim.
@@ -602,6 +676,7 @@ class LolGameSource:
         answers or LEAGUE_RESULT_WAIT runs out; until then the game counts
         with no result, which is what it was before this existed.
         """
+        self._maybe_speak_end()
         if not self._result_wanted_until:
             return
         if time.time() > self._result_wanted_until:
@@ -617,6 +692,7 @@ class LolGameSource:
             return
         self._result_wanted_until = 0.0
         self.temper.resolve_last(won)
+        self._maybe_speak_end(won)
 
     def _maybe_summarise(self) -> None:
         """
@@ -636,6 +712,9 @@ class LolGameSource:
     def _poll_game(self):
         data = self._fetch()
         if data is None:
+            self._misses += 1
+            if self._misses < GONE_AFTER_MISSES:
+                return
             if self._game_active:
                 print("[lol] Game no longer active")
                 # The API often goes away before its GameEnd event is read —
@@ -649,6 +728,9 @@ class LolGameSource:
                     if self._record_game(None):
                         self._result_wanted_until = (
                             time.time() + settings.LEAGUE_RESULT_WAIT)
+                        # Her line about the game is owed too — see
+                        # _maybe_speak_end.
+                        self._end_line_due = time.time() + END_LINE_WAIT
                 self._set_game_active(False)
                 # Her reaction to the last death is usually still being
                 # spoken when the API goes away — the game ends mid-sentence.
@@ -657,6 +739,7 @@ class LolGameSource:
                 self._summary_due = time.time() + SUMMARY_GRACE
             return
 
+        self._misses = 0
         self._current_game_time = data.get("gameData", {}).get("gameTime", 0)
         self.state.update(data, self._player_team, self._my_names)
 
@@ -709,26 +792,19 @@ class LolGameSource:
             if self._is_remake():
                 self._record_game(won)
                 self._set_game_active(False)
+                self._ended_at = self._current_game_time
                 return
-
-            # Two signals, in this order and on purpose.
-            #
-            # The cheer or boo goes first as a QUOTE — no LLM — so the noise
-            # lands while the screen is still grey instead of three seconds
-            # later, after a round trip and a synthesis. Her actual line about
-            # the game follows it as an ordinary GameEnd, and the dispatcher's
-            # busy flag guarantees that order without any coordination here.
-            self._push_cheer(won)
 
             # Before the signal goes out, so her line about the game is
             # framed by the temper this game just produced.
             self._record_game(won)
 
-            seed = self._pick_quote("game_state",
-                                    "game_win" if won else "game_loss")
-            self._push_event("GameEnd", seed or "Game over.", event, "GameEnd",
-                             extra_context={"won": won})
+            self._speak_end(won, event)
             self._set_game_active(False)
+            self._ended_at = self._current_game_time
+            # The API-gone path is never reached after this, and it was the
+            # only place the summary and the game_end marker were scheduled.
+            self._summary_due = time.time() + SUMMARY_GRACE
             return
 
         if name == "ChampionKill":
@@ -763,7 +839,7 @@ class LolGameSource:
             # lines specific. She still only speaks about the ones he took;
             # ten "a tower fell" reactions a game is the noise we are removing.
             killer = event.get("KillerName", "")
-            side = self._classify_killer(killer)
+            side = self._structure_side(event.get("TurretKilled", ""), killer)
             self.state.record_turret(side)
             if self._is_me(killer):
                 self._push_event("TurretKilled",
@@ -784,6 +860,13 @@ class LolGameSource:
             self._push_event("Ace", seed or "Ace!", event, "Ace",
                              extra_context={"side": "mine" if acer == self._player_team
                                                     else "enemy"})
+            return
+
+        # Named on purpose, so anything NEW shows up: Riot adds objectives
+        # (grubs, Atakhan) and an event nobody handles was silent forever.
+        if name not in IGNORED_EVENTS and name not in self._unhandled_logged:
+            self._unhandled_logged.add(name)
+            print(f"[lol] Unhandled event {name!r}, verbatim: {event}")
 
     # ---------------------------------------------------------
     # kills — buffered
@@ -1049,7 +1132,7 @@ class LolGameSource:
 
     def _handle_structure(self, event: dict, struct_name: str, event_prefix: str):
         killer = event.get("KillerName", "")
-        side = self._classify_killer(killer)
+        side = self._structure_side(event.get("InhibKilled", ""), killer)
         i_did_it = self._is_me(killer)
         if struct_name == "inhibitor":
             self.state.record_inhibitor(side)
@@ -1113,6 +1196,26 @@ class LolGameSource:
         # which have already been seen non-Latin in the wild.
         return self.identity.is_owner_game(name)
 
+    def _structure_side(self, structure: str, killer: str) -> str:
+        """
+        Whose side took a turret or inhibitor — from WHOSE STRUCTURE it was.
+
+        The killer is often not a champion at all: minions ("Minion_T200...")
+        and empty names. An empty name classified as "enemy", so a push by his
+        own minions became "the enemy destroyed one of your inhibitors". The
+        structure id says whose it was: "Barracks_T1_L1" and "Turret_T1_..."
+        are ORDER's, T2 is CHAOS's. Destroying your own is not a thing.
+        """
+        owner = ""
+        parts = str(structure or "").split("_")
+        if len(parts) > 1 and parts[1] in ("T1", "T100"):
+            owner = "ORDER"
+        elif len(parts) > 1 and parts[1] in ("T2", "T200"):
+            owner = "CHAOS"
+        if owner and self._player_team:
+            return "enemy" if owner == self._player_team else "mine"
+        return self._classify_killer(killer)
+
     def _classify_killer(self, killer_name: str) -> str:
         if not killer_name:
             return "enemy"
@@ -1140,6 +1243,17 @@ class LolGameSource:
     # ---------------------------------------------------------
     # push
     # ---------------------------------------------------------
+
+    def _is_big_moment(self, config_key: str, raw_event: dict | None) -> bool:
+        """Baron, an Ace, a soul or Elder drake — said every time."""
+        if config_key in ("BaronKill", "Ace"):
+            return True
+        if config_key == "DragonKill":
+            kind = str((raw_event or {}).get("DragonType", "")).lower()
+            return (kind == "elder"
+                    or len(self.state.ours.dragons) == 4
+                    or len(self.state.theirs.dragons) == 4)
+        return False
 
     def _ambient_verdict(self, event_type: str):
         """
@@ -1196,6 +1310,7 @@ class LolGameSource:
         # rulebook says always land — a sixth death at "100%" was arriving at
         # 55% or 30% because the previous two were inside the window.
         ruled = verdict is not None
+        big = self._is_big_moment(config_key, raw_event)
         config = EVENT_CONFIG.get(config_key,
                                   EVENT_CONFIG.get(event_type,
                                                    {"priority": 5, "ttl": 15}))
@@ -1204,14 +1319,21 @@ class LolGameSource:
         # stops her repeating a KIND of remark; this stops her narrating
         # continuously when five different kinds land inside one fight.
         # High-priority moments still cut through.
-        if config["priority"] > settings.VOICE_INTERRUPT_PRIORITY:
+        # Not the big moments. An Ace is BY DEFINITION the end of a fight she
+        # has just been talking about, so the gap ate every one of them: zero
+        # Aces spoken across eight games on 2026-11-02 and 11-06. Baron and
+        # soul were "must land" only as far as the notebook's repeat check —
+        # this gap, the chance roll and temper could still silence them here.
+        if config["priority"] > settings.VOICE_INTERRUPT_PRIORITY and not big:
             since = self._current_game_time - self._last_game_comment
             if self._last_game_comment > 0 and since < settings.GAME_MIN_GAP:
                 print(f"[lol] {config_key}: skipped "
                       f"(only {since:.0f}s since her last line)")
                 return
 
-        if ruled:
+        if big:
+            chance = 1.0
+        elif ruled:
             chance = verdict.react_chance
         else:
             chance = self._reaction_chance(config_key, event_type)
@@ -1226,7 +1348,7 @@ class LolGameSource:
         # she just watched him lose is not "speaking less", it is a bug — and
         # it is the same bug as the burst decay silently eating deaths the
         # rulebook says always land (§7).
-        if config["priority"] > settings.VOICE_INTERRUPT_PRIORITY:
+        if config["priority"] > settings.VOICE_INTERRUPT_PRIORITY and not big:
             chance *= self.temper.heat_factor()
 
         if chance < 1.0 and random.random() > chance:

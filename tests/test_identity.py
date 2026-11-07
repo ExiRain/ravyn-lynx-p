@@ -352,7 +352,9 @@ def test_remakes_and_counts_from_2026_10_30():
     src._check_for_game()
     src._poll_game()
     src._fetch = lambda: None
-    src._poll_game()
+    for _ in range(lol.GONE_AFTER_MISSES):
+        src._poll_game()
+    check("(the API really is gone)", not src.is_game_active)
     check("a remake is not counted for temper or promo", temper.games == [],
           str(temper.games))
     check("and the client is not asked who won it",
@@ -433,7 +435,10 @@ def test_every_game_is_counted():
             src._fetch = real_game
             src._check_for_game()
             src._fetch = lambda: None
-            src._poll_game()
+            # One miss is a hiccup now, not the end — see GONE_AFTER_MISSES.
+            from sources.lol_game import GONE_AFTER_MISSES
+            for _ in range(GONE_AFTER_MISSES):
+                src._poll_game()
 
         play_and_vanish()
         check("a game whose API vanished is counted", len(temper.games) == 1,

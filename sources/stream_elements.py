@@ -84,7 +84,15 @@ TYPE_ALIASES = {
     "subscription": "subscriber",
     "resub": "subscriber",
     "donation": "tip",
+    # The same feed on a YouTube channel.
+    "sponsor": "subscriber",
+    "superchat": "tip",
 }
+
+# More follows than this in one poll are read as one line. Alerts no longer
+# expire, so a follow-bot wave of two hundred would otherwise be two hundred
+# lines, queued ahead of everything else for the rest of the stream.
+FOLLOW_BURST = 3
 
 # How many activity ids to remember, so a restart or an overlapping poll
 # window cannot read the same donation twice. Generous: a raid can produce a
@@ -239,6 +247,13 @@ class StreamElementsSource:
             "currency": _symbol(currency),
             "message": data.get("message") or data.get("text") or "",
             "tier": str(data.get("tier") or ""),
+            # A gifted sub names the RECIPIENT as username and the buyer as
+            # sender. Thanking the recipient for the gifter's money is wrong,
+            # and a 20-gift bomb is 20 activities: grouped by sender in
+            # _announce, so it is one thank-you.
+            "gifted": bool(data.get("gifted")) or bool(
+                data.get("sender") and data.get("sender") != data.get("username")),
+            "sender": data.get("sender") or "",
         }
 
     # -----------------------------------------------------------------
@@ -277,7 +292,17 @@ class StreamElementsSource:
                 line += " " + self.sanitizer.next_message_placeholder() + "."
             return line, bool(clean.message) and read_message
 
+        if event["type"] == "gift":
+            gifter = self.sanitizer.clean(event["user"], "").name
+            return self._template("gift").format(
+                name=gifter, count=int(event.get("amount") or 1)).strip(), False
+
+        if event["type"] == "follow_burst":
+            return self._template("follow_burst").format(
+                name=clean.name, count=int(event.get("amount") or 0)).strip(), False
+
         key = {"subscriber": "subscriber", "follower": "follower",
+               "member": "member",
                "cheer": "cheer", "raid": "raid", "host": "raid"}.get(
                    event["type"], "")
         if not key:
@@ -304,6 +329,18 @@ class StreamElementsSource:
             "user": event["user"],
             "is_owner": False,
         }
+        # The PC's face prep keys on these (services/response_listener.py);
+        # without them a real follow or sub never got the surprised face that
+        # the mock events did.
+        face = {"follower": "follow", "follow_burst": "follow",
+                "subscriber": "sub", "gift": "sub", "member": "sub"}.get(event["type"])
+        if face:
+            context["event_type"] = face
+        # A YouTube viewer is keyed by channel id in the notebook's memory,
+        # so the donor note lands on them and not on a Twitch namesake.
+        if event.get("user_key"):
+            context["user_key"] = event["user_key"]
+            context["platform"] = event.get("platform", "")
         if is_tip:
             # The notebook turns this into a permanent note on whoever sent
             # it — counted, not appended. See ravyn-nb/persona/memory.py.
@@ -327,24 +364,12 @@ class StreamElementsSource:
     # -----------------------------------------------------------------
 
     def _handle(self, activity: dict, announce: bool = True) -> Signal | None:
-        event = self._parse_activity(activity)
-        if event is None:
-            return None
-
-        if event["id"] in self._seen_set:
-            return None
-        self._seen_set.add(event["id"])
-        self._seen.append(event["id"])
-        if len(self._seen_set) > SEEN_LIMIT * 2:
-            self._seen_set = set(self._seen)
-
-        if event["type"] != TIP and event["type"] not in ALERT_TYPES:
-            print(f"[se] Ignoring activity type {event['type']!r}")
-            return None
-
-        if not announce:
+        event = self._take(activity)
+        if event is None or not announce:
             return None            # first pass: remember, do not replay
+        return self._push(event)
 
+    def _push(self, event: dict) -> Signal | None:
         signal = self.to_signal(event)
         if signal is None:
             return None
@@ -353,6 +378,79 @@ class StreamElementsSource:
         print(f"[se] {event['type']}: {event['user'] or '?'} "
               f"{event['currency']}{event['amount']:g} -> {signal.text[:60]}")
         return signal
+
+    def _take(self, activity: dict) -> dict | None:
+        """Parse and dedupe one activity; the event if it is new and handled."""
+        event = self._parse_activity(activity)
+        if event is None or event["id"] in self._seen_set:
+            return None
+        self._seen_set.add(event["id"])
+        self._seen.append(event["id"])
+        if len(self._seen_set) > SEEN_LIMIT * 2:
+            self._seen_set = set(self._seen)
+        if event["type"] != TIP and event["type"] not in ALERT_TYPES:
+            print(f"[se] Ignoring activity type {event['type']!r}")
+            return None
+        return event
+
+    def push_external(self, event: dict) -> Signal | None:
+        """
+        An alert from somewhere other than StreamElements — YouTube's Super
+        Chats and memberships (sources/youtube_alerts.py). Same dedupe, same
+        sanitiser, same quote-only path.
+        """
+        if not event.get("id") or event["id"] in self._seen_set:
+            return None
+        self._seen_set.add(event["id"])
+        self._seen.append(event["id"])
+        try:
+            return self._push(event)
+        except Exception as e:
+            print(f"[se] Could not announce an external alert: {e}")
+            return None
+
+    def announce(self, activities: list) -> list:
+        """
+        One poll's activities, oldest first, into signals.
+
+        Gifted subs are grouped by who bought them and a burst of follows is
+        one line; everything else is one line each, in order.
+        """
+        events = []
+        for activity in activities:
+            try:
+                event = self._take(activity)
+            except Exception as e:
+                print(f"[se] Could not handle an activity: {e}")
+                continue
+            if event is not None:
+                events.append(event)
+
+        gifts: dict = {}
+        follows = [e for e in events if e["type"] == "follower"]
+        burst = len(follows) > FOLLOW_BURST
+        out = []
+        for event in events:
+            if event["type"] == "subscriber" and event["gifted"] and event["sender"]:
+                gifts.setdefault(event["sender"], []).append(event)
+                continue
+            if burst and event["type"] == "follower":
+                continue
+            out.append(event)
+
+        for sender, group in gifts.items():
+            out.append({**group[0], "type": "gift", "user": sender,
+                        "amount": len(group), "message": ""})
+        if burst:
+            out.append({**follows[-1], "type": "follow_burst",
+                        "amount": len(follows), "message": ""})
+
+        signals = []
+        for event in out:
+            signal = self._push(event)
+            if signal is not None:
+                signals.append(signal)
+        return signals
 
     def run(self) -> None:
         """Blocking. Run in a daemon thread."""
@@ -377,11 +475,7 @@ class StreamElementsSource:
 
         while self._running:
             time.sleep(settings.SE_POLL_INTERVAL)
-            for activity in reversed(self._fetch()):
-                try:
-                    self._handle(activity)
-                except Exception as e:
-                    print(f"[se] Could not handle an activity: {e}")
+            self.announce(list(reversed(self._fetch())))
 
     def stop(self) -> None:
         self._running = False
@@ -408,6 +502,21 @@ DEFAULT_TEMPLATES = {
         "{name} followed. Hello.",
         "A new face — {name}.",
         "{name} is watching now.",
+    ],
+    # A YouTube channel membership. "Subscribed" means something free there.
+    "member": [
+        "{name} became a member. Welcome in.",
+        "Thank you for the membership, {name}.",
+        "{name} is a member now. Good choice.",
+    ],
+    "gift": [
+        "{name} gifted {count} subs. Generous.",
+        "{count} gifted subs from {name}. I saw that.",
+        "{name} just handed out {count} subs.",
+    ],
+    "follow_burst": [
+        "{count} new followers at once. Hello, all of you.",
+        "{count} people just followed. I am watching every one of you.",
     ],
     # Bits are a COUNT, not money: "cheered $500" prices them in dollars.
     "cheer": [
