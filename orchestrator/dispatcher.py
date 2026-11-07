@@ -37,6 +37,12 @@ class Dispatcher:
         self._busy_lock = threading.Lock()
         self._on_dispatch_callbacks: list = []
         self._running = True
+        # Whether a League game is live right now, set by the game source
+        # (app/main.py). The notebook's prompt has a "Game: ... active / No
+        # game is running" line that read this and never got it, so EVERY
+        # prompt said "No game is running. Just chatting." — mid-game kills
+        # and deaths included.
+        self.game_active = False
 
     # ---------------------------------------------------------
     # busy state
@@ -221,6 +227,7 @@ class Dispatcher:
         # prompt — otherwise she drags every subject back to a game nobody is
         # playing. A source that genuinely knows better sets it itself.
         signal.context.setdefault("league_mode", self.settings.LEAGUE_MODE)
+        signal.context.setdefault("game_active", self.game_active)
 
         payload = json.dumps(signal.to_request())
 
