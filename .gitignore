@@ -3,7 +3,12 @@ __pycache__/
 *.pyc
 *.log
 .env
-logs/
+# Session logs: logs/pc/ (this machine) and logs/nb/ (the notebook's,
+# mirrored here by services/log_receiver.py). They hold viewer names, chat
+# and donation messages, and this repo is public — keep them out, or commit
+# them to a PRIVATE repo. See logs/README.md.
+logs/*
+!logs/README.md
 # ...except the running table of every game. Numbers and her own phrasing
 # only — no voice transcripts, no viewer names — so it is safe in a public
 # repo, and it is the thing worth keeping across machines.

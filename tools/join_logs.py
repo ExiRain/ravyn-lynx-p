@@ -1,7 +1,8 @@
 """
 Both halves of one line, side by side.
 
-    python tools/join_logs.py logs/session-x.jsonl worker-y.jsonl
+    python tools/join_logs.py                     # newest session + its nb log
+    python tools/join_logs.py logs/pc/session-x.jsonl
     python tools/join_logs.py session.jsonl worker.jsonl --seq 14
 
 The PC records what she SAID and the knobs that produced it. The notebook
@@ -23,9 +24,10 @@ that matters, and they answer it mechanically:
 That is the whole tool. It does not re-measure repetition — `analyze_session.py`
 does that, and this reads its clusters back to explain them.
 
-The worker log lives on the notebook, so copy it over first:
-
-    scp ravyn@notebook:~/ravyn-lynx/logs/worker-20260922-201500.jsonl .
+The notebook sends its worker log to the PC as it is written, into logs/nb/
+(services/log_receiver.py), so the matching one is found on its own — the
+worker file sharing the most req_ids with the session. Pass one explicitly
+to override.
 """
 
 from __future__ import annotations
@@ -40,6 +42,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from orchestrator import session_metrics                           # noqa: E402
 from orchestrator.session_metrics import analyse, knob, said       # noqa: E402
 from tools import analyze_session                                  # noqa: E402
+
+ROOT = analyze_session.ROOT
 
 
 def load_worker(path: Path) -> tuple[dict, dict]:
@@ -212,6 +216,27 @@ def _verdict(angles: set, seeds: set, landed_all: bool) -> str:
     return "no single explanation; read the prompts with --seq"
 
 
+def matching_worker(pc_records: list) -> Path | None:
+    """The logs/nb/ file sharing the most req_ids with this session."""
+    wanted = {r.get("req_id") for r in pc_records if r.get("req_id")}
+    best, best_hits = None, 0
+    for path in sorted((ROOT / "logs" / "nb").glob("worker-*.jsonl")):
+        hits = 0
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if '"req_id"' in line:
+                    try:
+                        if json.loads(line).get("req_id") in wanted:
+                            hits += 1
+                    except ValueError:
+                        continue
+        except OSError:
+            continue
+        if hits > best_hits:
+            best, best_hits = path, hits
+    return best
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("session", nargs="?", help="PC logs/session-*.jsonl")
@@ -228,17 +253,22 @@ def main() -> int:
         print("No PC session log. Pass one, or run her once.")
         return 1
 
-    if not args.worker:
-        print("Also pass the notebook's worker log. It lives on the notebook:\n"
-              "  scp ravyn@notebook:~/ravyn-lynx/logs/worker-*.jsonl .")
-        return 1
+    pc_records, _ = analyze_session.load(session)
+    if args.worker:
+        worker_path = Path(args.worker)
+    else:
+        worker_path = matching_worker(pc_records)
+        if worker_path is None:
+            print("No notebook log in logs/nb/ shares a request with this "
+                  "session. Is the notebook sending it (RAVYN_WORKER_LOG_SHIP)?"
+                  " Or pass one explicitly.")
+            return 1
+        print(f"Notebook log: {worker_path}")
 
-    worker_path = Path(args.worker)
     if not worker_path.exists():
         print(f"No such file: {worker_path}")
         return 1
 
-    pc_records, _ = analyze_session.load(session)
     if not pc_records:
         print(f"{session}: nothing to join")
         return 1

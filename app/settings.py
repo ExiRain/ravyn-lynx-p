@@ -26,6 +26,10 @@ class Settings:
 
     QUEUE_REQUEST = "ravyn.request"
     QUEUE_RESPONSE = "ravyn.response"
+    # The notebook's worker log, line by line — see services/log_receiver.py.
+    # LOG_QUEUE_MAX must match the notebook's RAVYN_LOG_QUEUE_MAX.
+    QUEUE_LOG = "ravyn.log"
+    LOG_QUEUE_MAX = 20000
 
     # --- Dispatcher ---
     DISPATCH_POLL_INTERVAL = 0.1
@@ -518,7 +522,14 @@ class Settings:
     # Cheap: a few hundred lines of JSON per stream, written on the response
     # thread, and every call site swallows its own errors.
     SESSION_LOG_ENABLED = True
-    SESSION_LOG_DIR = "logs"
+    # Both machines' logs in one place:
+    #   logs/pc/       this machine's session logs
+    #   logs/nb/       the notebook's worker logs, sent over RabbitMQ
+    #   logs/history.csv   the running table of every game
+    SESSION_LOG_DIR = "logs/pc"
+    NB_LOG_DIR = "logs/nb"
+    NB_LOG_ENABLED = True
+    HISTORY_CSV = "logs/history.csv"
 
     # Also keep the SITUATION block, the angle instruction and the tone
     # instruction verbatim on every record. Answers "what exactly was she

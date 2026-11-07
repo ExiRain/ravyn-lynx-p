@@ -78,7 +78,10 @@ def load(path: Path) -> tuple[list[dict], str]:
 
 
 def newest_log() -> Path | None:
-    logs = sorted((ROOT / "logs").glob("session-*.jsonl"))
+    # logs/pc/ now; logs/ itself for sessions recorded before the split.
+    logs = sorted(list((ROOT / "logs" / "pc").glob("session-*.jsonl"))
+                  + list((ROOT / "logs").glob("session-*.jsonl")),
+                  key=lambda p: p.name)
     return logs[-1] if logs else None
 
 
