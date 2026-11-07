@@ -224,6 +224,22 @@ def test_unknown_league_events_are_reported():
     check("once", text.count("Unhandled event") == 1, text)
 
 
+def test_numbers_say_whose_they_are():
+    print("\n--- every number in the situation says whose it is ---")
+    from orchestrator.game_state import GameState
+    g = GameState()
+    g.update(real_game(), "ORDER", {"серый экран#ru"})
+    text = g.render()
+    check("his own score is labelled as his",
+          "HIS OWN score: 6 kills, 2 deaths, 3 assists" in text, text)
+    check("team totals say they are not his",
+          "NOT his own): your team 12, theirs 27" in text, text)
+    check("CS rank is a CS rank, not a scoreboard place",
+          "most CS of all ten players" in text, text)
+    check("she is told not to move or add up numbers",
+          "never add them up" in text)
+
+
 # ================================================================ alerts
 def se():
     queue = SignalQueue()
@@ -351,6 +367,7 @@ def main():
     test_post_game_screen_is_not_a_new_game()
     test_a_game_that_vanished_still_gets_its_ending()
     test_unknown_league_events_are_reported()
+    test_numbers_say_whose_they_are()
     test_streamelements_type_names()
     test_gift_bombs_and_follow_waves_are_one_line()
     test_youtube_paid_events()

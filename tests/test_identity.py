@@ -213,7 +213,7 @@ def test_who_did_what():
     check("enemies appear by champion and line",
           "Darius 11/2/4" in rendered)
     check("his own line is separate from the team total",
-          "Exiled: Riven" in rendered and "Kills: your team 12" in rendered)
+          "Exiled (Riven" in rendered and "your team 12" in rendered)
 
     check("the worst teammate is identifiable",
           s.worst_ally().champion == "Jinx", str(s.worst_ally()))

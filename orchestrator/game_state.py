@@ -454,24 +454,33 @@ class GameState:
         if self.game_time > 0:
             lines.append(f"{int(self.minutes)} minutes in ({self.phase} game).")
 
+        # Every number is labelled with whose it is. "Exiled: Riven, 16/5/8"
+        # next to "Kills: your team 22" was read as HIS 22 kills on
+        # 2026-11-06, a CS rank became "fourth on the scoreboard", and she
+        # invented "eighteen CS per minute". A small model needs the owner
+        # spelled out next to each number, not implied by position.
         if self.champion:
-            who = f"Exiled: {self.champion}"
+            who = f"Exiled ({self.champion}"
             if self.position:
-                who += f" {ROLE_SHORT.get(self.position, self.position)}"
+                who += f", {ROLE_SHORT.get(self.position, self.position)}"
+            who += ")"
             if self.level:
-                who += f", level {self.level}"
-            who += f", {self.kda_line}"
+                who += f": level {self.level}"
+            who += (f". HIS OWN score: {self.kills} kills, {self.deaths} "
+                    f"deaths, {self.assists} assists")
             if self.cs:
-                who += f", {self.cs} CS"
+                who += f". His CS: {self.cs}"
                 if self.minutes >= 3:
-                    detail = f"{self.cs_per_min:.1f}/min"
+                    detail = f"{self.cs_per_min:.1f} per minute"
                     if self.cs_rank:
-                        detail += f", {_ordinal(self.cs_rank)} of ten"
+                        detail += (f"; {_ordinal(self.cs_rank)} most CS of "
+                                   f"all ten players")
                     who += f" ({detail})"
             lines.append(who + ".")
 
         if self.ours.kills or self.theirs.kills:
-            lines.append(f"Kills: your team {self.ours.kills}, "
+            lines.append(f"Team kill totals (all five players added up — NOT "
+                         f"his own): your team {self.ours.kills}, "
                          f"theirs {self.theirs.kills}.")
 
         drakes = self._dragon_line()
@@ -488,10 +497,12 @@ class GameState:
                          f"({opponent.cs} CS to his {self.cs}).")
 
         if self.allies:
-            lines.append("His team: " + ", ".join(str(p) for p in self.allies) + ".")
+            lines.append("His teammates, each kills/deaths/assists: "
+                         + ", ".join(str(p) for p in self.allies) + ".")
 
         if self.enemies:
-            lines.append("Enemy team: " + ", ".join(str(p) for p in self.enemies) + ".")
+            lines.append("Enemy team, each kills/deaths/assists: "
+                         + ", ".join(str(p) for p in self.enemies) + ".")
         elif self.enemy_champions:
             lines.append("Enemy team: " + ", ".join(self.enemy_champions) + ".")
 
@@ -500,7 +511,11 @@ class GameState:
 
         return ("SITUATION — measured from the game. You may use these facts. "
                 "Do not state anything about the game beyond them.\n"
-                + "\n".join(f"  {line}" for line in lines))
+                + "\n".join(f"  {line}" for line in lines)
+                + "\n  NUMBERS: each one belongs to the person or team written "
+                  "next to it. Never give one to someone else, never add them "
+                  "up, never work out a rate or a total yourself. If you are "
+                  "not sure whose a number is, say no number.")
 
     def _dragon_line(self) -> str:
         ours, theirs = len(self.ours.dragons), len(self.theirs.dragons)
