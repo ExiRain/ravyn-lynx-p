@@ -234,6 +234,8 @@ def main():
             # the game source flips, not on the next dispatch — a game that
             # ends with no GameEnd event dispatches nothing at all.
             silence.game_active = active
+            # And the notebook: every request says whether a game is on.
+            dispatcher.game_active = active
             if promo:
                 promo.game_active = active
 

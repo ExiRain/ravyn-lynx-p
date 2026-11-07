@@ -1,0 +1,3 @@
+# The combined graph is graphify output, not a source: reading it back in
+# made the graph describe its own report.
+graph/

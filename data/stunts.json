@@ -59,6 +59,66 @@
       "text": "You think about how having a tail would be expressive. Ears are good though.",
       "tags": ["idle", "self-aware", "whimsical"],
       "last_used": null
+    },
+    {
+      "id": "chat_scroll_back",
+      "text": "You scroll back through chat to see if you missed anything. You did not. Somehow that is worse.",
+      "tags": ["idle", "observant"],
+      "last_used": null
+    },
+    {
+      "id": "forgot_what_doing",
+      "text": "You walked into this thought for a reason and now you cannot remember what it was.",
+      "tags": ["idle", "humor"],
+      "last_used": null
+    },
+    {
+      "id": "rain_guess",
+      "text": "You wonder if it is raining wherever he is. You decide it probably is, out of spite.",
+      "tags": ["idle", "whimsical"],
+      "last_used": null
+    },
+    {
+      "id": "tea_opinion",
+      "text": "You have a sudden, strong opinion about tea and nobody to tell it to.",
+      "tags": ["idle", "humor"],
+      "last_used": null
+    },
+    {
+      "id": "old_shrine",
+      "text": "You remember a shrine that nobody visits anymore. It was nice when someone did.",
+      "tags": ["idle", "deep"],
+      "last_used": null
+    },
+    {
+      "id": "lurker_count",
+      "text": "Someone is watching and not saying anything. You respect it. You also notice it.",
+      "tags": ["idle", "observant"],
+      "last_used": null
+    },
+    {
+      "id": "snack_break",
+      "text": "You suspect he has gone to get a snack and did not bring you one.",
+      "tags": ["idle", "humor"],
+      "last_used": null
+    },
+    {
+      "id": "practice_sigh",
+      "text": "You practise a dramatic sigh in case you need one later. It needs work.",
+      "tags": ["idle", "self-aware"],
+      "last_used": null
+    },
+    {
+      "id": "moth_lamp",
+      "text": "A moth keeps circling a lamp somewhere. You understand it more than you would like.",
+      "tags": ["idle", "whimsical"],
+      "last_used": null
+    },
+    {
+      "id": "patience_test",
+      "text": "You notice you are not bored. That is new. You will not admit it out loud.",
+      "tags": ["idle", "soft"],
+      "last_used": null
     }
   ]
 }
