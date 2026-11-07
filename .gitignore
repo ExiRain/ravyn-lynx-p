@@ -13,3 +13,6 @@ logs/*
 # only — no voice transcripts, no viewer names — so it is safe in a public
 # repo, and it is the thing worth keeping across machines.
 !logs/history.csv
+
+# graphify knowledge graph — rebuilt on demand with /graphify, not source
+graphify-out/
