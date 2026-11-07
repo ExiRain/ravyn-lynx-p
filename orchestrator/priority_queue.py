@@ -29,6 +29,7 @@ class SignalQueue:
                 _, _, signal = heapq.heappop(self._heap)
                 if not signal.is_expired():
                     return signal
+                _log_expired(signal)
             return None
 
     def peek(self) -> Signal | None:
@@ -67,4 +68,10 @@ class SignalQueue:
     # internal — caller must hold lock
     def _drain_expired(self) -> None:
         while self._heap and self._heap[0][2].is_expired():
-            heapq.heappop(self._heap)
+            _log_expired(heapq.heappop(self._heap)[2])
+
+
+def _log_expired(signal: Signal) -> None:
+    """Expired lines used to vanish without a trace; say which one went."""
+    print(f"[queue] Expired unspoken: {signal.source} "
+          f"(priority {signal.priority}, ttl {signal.ttl}s) {signal.text[:50]}")

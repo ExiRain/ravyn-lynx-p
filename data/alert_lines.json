@@ -35,5 +35,19 @@
     "{name} brought company. Behave, all of you.",
     "A raid from {name}. Make room.",
     "{name} is here with friends."
+  ],
+  "gift": [
+    "{name} gifted {count} subs. Generous.",
+    "{count} gifted subs from {name}. I saw that.",
+    "{name} just handed out {count} subs."
+  ],
+  "follow_burst": [
+    "{count} new followers at once. Hello, all of you.",
+    "{count} people just followed. I am watching every one of you."
+  ],
+  "member": [
+    "{name} became a member. Welcome in.",
+    "Thank you for the membership, {name}.",
+    "{name} is a member now. Good choice."
   ]
 }

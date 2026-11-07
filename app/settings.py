@@ -26,6 +26,10 @@ class Settings:
 
     QUEUE_REQUEST = "ravyn.request"
     QUEUE_RESPONSE = "ravyn.response"
+    # The notebook's worker log, line by line — see services/log_receiver.py.
+    # LOG_QUEUE_MAX must match the notebook's RAVYN_LOG_QUEUE_MAX.
+    QUEUE_LOG = "ravyn.log"
+    LOG_QUEUE_MAX = 20000
 
     # --- Dispatcher ---
     DISPATCH_POLL_INTERVAL = 0.1
@@ -306,9 +310,12 @@ class Settings:
     SE_POLL_INTERVAL = 4.0          # seconds between checks
     SE_LOOKBACK_MINUTES = 10        # how far back a poll looks
 
-    # A thank-you that arrives two minutes late is worse than none: the moment
-    # it belonged to is over and the viewer has gone.
-    SE_TTL = 90.0
+    # None = never expires. A follower, sub or donation is someone the
+    # streamer wants greeted, every time: a thank-you that waits behind a
+    # multikill is fine, one that silently ages out of the queue is not.
+    # Priority (ALERT_PRIORITY / DONATION_PRIORITY) already puts them at the
+    # front and lets them through the voice gate.
+    SE_TTL = None
 
     # She finishes the sentence she is on, then hands the floor over if
     # something more important arrived while she was talking. Checked between
@@ -515,7 +522,14 @@ class Settings:
     # Cheap: a few hundred lines of JSON per stream, written on the response
     # thread, and every call site swallows its own errors.
     SESSION_LOG_ENABLED = True
-    SESSION_LOG_DIR = "logs"
+    # Both machines' logs in one place:
+    #   logs/pc/       this machine's session logs
+    #   logs/nb/       the notebook's worker logs, sent over RabbitMQ
+    #   logs/history.csv   the running table of every game
+    SESSION_LOG_DIR = "logs/pc"
+    NB_LOG_DIR = "logs/nb"
+    NB_LOG_ENABLED = True
+    HISTORY_CSV = "logs/history.csv"
 
     # Also keep the SITUATION block, the angle instruction and the tone
     # instruction verbatim on every record. Answers "what exactly was she

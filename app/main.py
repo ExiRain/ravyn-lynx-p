@@ -114,11 +114,20 @@ def main():
     # --- Session log ---
     # Opened before anything can dispatch: a signal that goes out before this
     # exists is a line missing from the transcript. See tools/analyze_session.py.
+    root = Path(__file__).resolve().parent.parent
     session_log.init(
-        Path(__file__).resolve().parent.parent / settings.SESSION_LOG_DIR,
+        root / settings.SESSION_LOG_DIR,
         enabled=settings.SESSION_LOG_ENABLED,
         full_context=settings.SESSION_LOG_FULL_CONTEXT,
+        history_path=root / settings.HISTORY_CSV,
     )
+
+    # The notebook's worker log, mirrored into logs/nb/ — both halves of
+    # every session on this machine. See services/log_receiver.py.
+    if settings.NB_LOG_ENABLED and not TEST_MODE:
+        from services.log_receiver import LogReceiver
+        receiver = LogReceiver(root / settings.NB_LOG_DIR)
+        Thread(target=receiver.run, daemon=True, name="nb-log").start()
 
     # --- Orchestrator core ---
     # Built first: the response listener clears its busy flag, so it needs
@@ -258,8 +267,11 @@ def main():
         room = room or ChatRoom(queue, identity=identity)
         # No key needed; the API reader is only a fallback, and only if a
         # key is set, for when YouTube's web format changes under us.
-        fallback = YouTubeChatSource(room) if settings.YT_API_KEY else None
-        youtube = YouTubeWebChat(room, fallback=fallback)
+        # Super Chats and memberships are thanked through the alerts path
+        # (sanitised, quote-only); --no-alerts turns them off with the rest.
+        fallback = (YouTubeChatSource(room, alerts=alerts)
+                    if settings.YT_API_KEY else None)
+        youtube = YouTubeWebChat(room, fallback=fallback, alerts=alerts)
         Thread(target=youtube.run, daemon=True, name="youtube-chat").start()
 
     # --- Mock ---

@@ -107,7 +107,7 @@ def test_state():
     check("phase from game time", s.phase == "mid", s.phase)
 
     rendered = s.render()
-    check("situation reaches the prompt", "Riven" in rendered and "7.0/min" in rendered)
+    check("situation reaches the prompt", "Riven" in rendered and "7.0 per minute" in rendered)
     check("situation forbids inventing beyond it",
           "Do not state anything about the game beyond them" in rendered)
 
@@ -139,7 +139,7 @@ def test_role_detection():
     check("no smite and no position leaves role unknown", s.position == "",
           s.position)
     check("unknown role is omitted from the situation",
-          "Riven," in s.render() and "Riven unknown" not in s.render())
+          "Exiled (Riven)" in s.render() and "unknown" not in s.render())
 
     # The RU client localises displayName; the raw key still carries the name.
     s = GameState()

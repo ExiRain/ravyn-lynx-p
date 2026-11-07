@@ -56,8 +56,9 @@ class YouTubeChatSource:
 
     def __init__(self, room, api_key: str | None = None,
                  channel_id: str | None = None, video_id: str | None = None,
-                 http_get=None):
+                 http_get=None, alerts=None):
         self.room = room
+        self.alerts = alerts    # see YouTubeWebChat: Super Chats, members
         self.key = settings.YT_API_KEY if api_key is None else api_key
         self.channel = (settings.YT_CHANNEL_ID if channel_id is None
                         else channel_id)
@@ -214,7 +215,13 @@ class YouTubeChatSource:
             self._reset()
             return
         if kind != "textMessageEvent":
-            return      # super chats, memberships, polls: not chat lines
+            # Super Chats and memberships are alerts, not chat lines. They
+            # used to be dropped here, so nobody paying on YouTube was thanked.
+            from sources.youtube_alerts import from_api_item
+            event = from_api_item(item)
+            if event is not None and self.alerts is not None:
+                self.alerts.push_external(event)
+            return
 
         text = ((snippet.get("textMessageDetails") or {}).get("messageText")
                 or snippet.get("displayMessage") or "").strip()

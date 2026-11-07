@@ -54,8 +54,12 @@ class SessionLog:
     """
 
     def __init__(self, directory: Path | str, enabled: bool = True,
-                 full_context: bool = False):
+                 full_context: bool = False,
+                 history_path: Path | str | None = None):
         self.enabled = enabled
+        # The game table lives above the per-machine folders (logs/), not in
+        # logs/pc/, so it stays where .gitignore and the tools expect it.
+        self.history_path = Path(history_path) if history_path else None
         self.full_context = full_context
         self.path: Path | None = None
         self._lock = threading.Lock()
@@ -280,7 +284,7 @@ class SessionLog:
             for line in session_metrics.console_lines(summary):
                 print(line)
 
-            history = self.path.parent / "history.csv"
+            history = self.history_path or (self.path.parent / "history.csv")
             session_metrics.append_history(summary, history)
             return summary
         except Exception as e:
@@ -324,9 +328,11 @@ _LOG: SessionLog | None = None
 
 
 def init(directory: Path | str, enabled: bool = True,
-         full_context: bool = False) -> SessionLog:
+         full_context: bool = False,
+         history_path: Path | str | None = None) -> SessionLog:
     global _LOG
-    _LOG = SessionLog(directory, enabled=enabled, full_context=full_context)
+    _LOG = SessionLog(directory, enabled=enabled, full_context=full_context,
+                      history_path=history_path)
     return _LOG
 
 
