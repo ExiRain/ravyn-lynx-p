@@ -79,12 +79,32 @@ class SilenceFiller:
         return improv_ok
 
     def _pick_entry(self, pool: list[dict]) -> dict | None:
+        """
+        A shuffled deck: every entry once, in random order, before any repeat.
+
+        It used to pick at random from the least recently used HALF, so with
+        ten seeds one could come back after five others — on 2026-11-02 six
+        seeds were heard twice in one stream. Now a repeat needs the whole
+        pool to have gone by first, and each new round deals the half used
+        longest ago first, so even across the seam at least half the pool
+        separates two uses of one entry.
+        """
         if not pool:
             return None
-        sorted_pool = sorted(pool, key=lambda e: e.get("last_used") or 0)
-        candidates = sorted_pool[:max(1, len(sorted_pool) // 2)]
-        entry = random.choice(candidates)
-        entry["last_used"] = time.time()
+        decks = self.__dict__.setdefault("_decks", {})
+        deck = decks.get(id(pool))
+        if not deck:
+            by_age = sorted(pool, key=lambda e: e.get("last_used") or 0)
+            half = len(by_age) // 2
+            older, newer = by_age[:half], by_age[half:]
+            random.shuffle(older)
+            random.shuffle(newer)
+            deck = newer + older            # pop() takes from the end: older first
+            decks[id(pool)] = deck
+        entry = deck.pop()
+        # Strictly increasing, so two picks in the same instant still order.
+        entry["last_used"] = max(time.time(), max(
+            (e.get("last_used") or 0) for e in pool) + 1e-6)
         return entry
 
     def run(self) -> None:
