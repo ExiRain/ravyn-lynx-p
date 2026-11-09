@@ -279,6 +279,15 @@ class YouTubeWebChat:
             for event in self._paid_events(actions):
                 if self._remember(event["id"]) and self.alerts is not None:
                     self.alerts.push_external(event)
+            # A ban or timeout on YouTube removes all of that person's
+            # messages at once; the ban itself is not visible here, so it is
+            # treated as a ban for the rest of the stream.
+            for action in actions:
+                removed = action.get("removeChatItemByAuthorAction") or {}
+                channel = removed.get("externalChannelId")
+                if channel and hasattr(self.room, "moderate"):
+                    self.room.moderate("youtube", user_key=f"youtube:{channel}",
+                                       kind="ban")
 
         self._token = token
         return max(1.5, min(wait or settings.YT_WEB_POLL,

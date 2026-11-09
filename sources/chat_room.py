@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from app.settings import get_settings
 from orchestrator.models import Signal
 from orchestrator.priority_queue import SignalQueue
+from sources.chat_guard import ScamWatch
 
 settings = get_settings()
 
@@ -128,6 +129,20 @@ class ChatRoom:
     TTL = 120.0
     MAX_CONTEXT_MESSAGES = 3
 
+    # What she says when the streamer bans or times someone out. Never the
+    # name: a scammer's or a troll's name is often the bait. Rotated.
+    MODERATION_LINES = {
+        "ban": ["Gone. The air is cleaner already.",
+                "And they are out. Good.",
+                "Bye. Do not come back.",
+                "Removed. Nobody will miss that."],
+        "timeout": ["Sit in the corner for a while.",
+                    "A little quiet time for that one.",
+                    "Timeout. Think about what you did."],
+    }
+    MODERATION_PRIORITY = 4
+    MODERATION_GAP = 30.0       # at most one moderation remark per this
+
     def __init__(self, queue: SignalQueue, known_users: set = None,
                  identity=None):
         self.queue = queue
@@ -141,6 +156,100 @@ class ChatRoom:
         self._batch_window = BatchWindow()
         self._batches_started = False
         self._start_lock = threading.Lock()
+        # Moderation, for this stream: key -> until (a time, or inf for a
+        # ban). Keys are "platform:login" and the user_key where one exists.
+        self._removed: dict[str, float] = {}
+        self._mod_turn: dict[str, int] = {}
+        self._last_mod_remark = 0.0
+        # Likely scammers: flagged once, answered once (warily), then skipped.
+        self.scams = ScamWatch()
+        self._warned: set[str] = set()
+
+    @staticmethod
+    def _keys(platform: str, user: str, user_key: str = "") -> list[str]:
+        keys = [f"{platform}:{(user or '').strip().lower()}"] if user else []
+        if user_key:
+            keys.append(user_key)
+        return keys
+
+    def is_removed(self, platform: str, user: str = "",
+                   user_key: str = "") -> bool:
+        """Banned, or timed out and still serving it."""
+        now = time.time()
+        return any(self._removed.get(k, 0) > now
+                   for k in self._keys(platform, user, user_key))
+
+    def moderate(self, platform: str, user: str = "", user_key: str = "",
+                 kind: str = "ban", seconds: float | None = None) -> int:
+        """
+        The streamer banned or timed someone out; how many waiting messages
+        and replies of theirs were dropped.
+
+        On 2026-11-09 she went on answering a scammer after he was banned:
+        his messages were still in the batch and her replies in the queue.
+        Both are cleared here, his later messages are ignored for as long as
+        the ban or timeout lasts, and the dispatcher checks once more right
+        before she speaks (Dispatcher.inflight_still_wanted).
+        """
+        keys = self._keys(platform, user, user_key)
+        if not keys:
+            return 0
+        until = float("inf") if kind == "ban" else time.time() + (seconds or 600)
+        for k in keys:
+            self._removed[k] = max(self._removed.get(k, 0), until)
+
+        def theirs(platform_, user_, key_):
+            return bool(set(self._keys(platform_, user_, key_)) & set(keys))
+
+        with self._buffer_lock:
+            before = len(self._buffer)
+            self._buffer = [m for m in self._buffer
+                            if not theirs(m.platform, m.user, m.user_key)]
+            dropped = before - len(self._buffer)
+        dropped += self.queue.remove_where(
+            lambda sig: sig.source == "chat" and theirs(
+                sig.context.get("platform", "twitch"),
+                sig.context.get("user", ""), sig.context.get("user_key", "")))
+        print(f"[chat][{platform}] {kind}: {user or user_key} — "
+              f"{dropped} waiting message(s)/reply(ies) dropped")
+        self._remark(kind)
+        return dropped
+
+    def delete_message(self, platform: str, user: str, text: str) -> int:
+        """One message deleted by a moderator: never answer it."""
+        keys = set(self._keys(platform, user))
+        text = (text or "").strip()
+        with self._buffer_lock:
+            before = len(self._buffer)
+            self._buffer = [m for m in self._buffer
+                            if not (set(self._keys(m.platform, m.user)) & keys
+                                    and m.text.strip() == text)]
+            dropped = before - len(self._buffer)
+        dropped += self.queue.remove_where(
+            lambda sig: sig.source == "chat" and sig.text.strip() == text
+            and set(self._keys(sig.context.get("platform", "twitch"),
+                               sig.context.get("user", ""))) & keys)
+        return dropped
+
+    def clear_all(self) -> int:
+        """The whole chat was cleared: nothing waiting is answered."""
+        with self._buffer_lock:
+            dropped = len(self._buffer)
+            self._buffer.clear()
+        return dropped + self.queue.remove_where(lambda sig: sig.source == "chat")
+
+    def _remark(self, kind: str) -> None:
+        lines = self.MODERATION_LINES.get(kind)
+        now = time.time()
+        if not lines or now - self._last_mod_remark < self.MODERATION_GAP:
+            return
+        self._last_mod_remark = now
+        turn = self._mod_turn.get(kind, 0)
+        self._mod_turn[kind] = turn + 1
+        self.queue.push(Signal(
+            source="chat", priority=self.MODERATION_PRIORITY,
+            text=lines[turn % len(lines)], mode="quote", skip_llm=True,
+            ttl=60.0, context={"trigger": "moderation", "moderation": kind}))
 
     def start(self) -> None:
         """Start the batch processor once, whichever platform asks first."""
@@ -159,6 +268,8 @@ class ChatRoom:
     def post(self, platform: str, user: str, text: str, *,
              user_key: str = "", is_owner: bool = False) -> None:
         """One message from any platform."""
+        if self.is_removed(platform, user, user_key):
+            return
         self._batch_window.record_message()
 
         # His messages bypass the contest AND the batch window.
@@ -176,6 +287,15 @@ class ChatRoom:
         if score is None:
             return
 
+        # Regulars are never flagged; the owner never reaches here.
+        key = user_key or f"{platform}:{user.lower()}"
+        scam = ([] if user.lower() in self.known_users
+                else self.scams.observe(key, text))
+        if scam and key in self._warned:
+            print(f"[chat][{platform}] {user}: skipped — already answered "
+                  f"once as a likely scam ({', '.join(scam)})")
+            return
+
         msg = ScoredMessage(user=user, text=text, score=score,
                             platform=platform, user_key=user_key)
         with self._buffer_lock:
@@ -188,6 +308,18 @@ class ChatRoom:
         if user_key:
             ctx["user_key"] = user_key
         return ctx
+
+    def _scam_context(self, msg: "ScoredMessage", ctx: dict) -> None:
+        """Flag a likely scammer for the notebook; he is answered once."""
+        if msg.user.lower() in self.known_users:
+            return
+        key = msg.user_key or f"{msg.platform}:{msg.user.lower()}"
+        reasons = self.scams.reasons(key)
+        if reasons:
+            ctx["scam_suspect"] = True
+            ctx["scam_reasons"] = reasons
+            self._warned.add(key)
+            print(f"[chat] {msg.user} looks like a scam: {', '.join(reasons)}")
 
     def _push_owner(self, platform: str, user: str, text: str,
                     user_key: str = "") -> None:
@@ -231,6 +363,7 @@ class ChatRoom:
                         for m in batch[1:self.MAX_CONTEXT_MESSAGES + 1]]
 
         ctx = self._context(winner.platform, winner.user, winner.user_key)
+        self._scam_context(winner, ctx)
         ctx.update({
             "is_owner": False,
             "recent_chat": context_msgs,

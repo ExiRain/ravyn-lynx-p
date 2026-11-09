@@ -43,6 +43,9 @@ class Dispatcher:
         # prompt said "No game is running. Just chatting." — mid-game kills
         # and deaths included.
         self.game_active = False
+        # The chat room, set by app/main.py once it exists, so a reply to
+        # someone banned while she was writing it is never spoken.
+        self.moderation = None
 
     # ---------------------------------------------------------
     # busy state
@@ -70,6 +73,23 @@ class Dispatcher:
         """
         with self._busy_lock:
             return self._inflight.priority if self._inflight else 5
+
+    def inflight_still_wanted(self) -> bool:
+        """
+        False if the line in flight answers someone banned or timed out
+        since it was dispatched. Asked by the response listener right before
+        she speaks — the last point a ban can still stop the reply.
+        """
+        with self._busy_lock:
+            signal = self._inflight
+        room = self.moderation
+        if signal is None or room is None or signal.source != "chat":
+            return True
+        ctx = signal.context
+        if not (ctx.get("user") or ctx.get("user_key")):
+            return True
+        return not room.is_removed(ctx.get("platform", "twitch"),
+                                   ctx.get("user", ""), ctx.get("user_key", ""))
 
     def more_important_waiting(self) -> str:
         """

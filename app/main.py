@@ -202,6 +202,7 @@ def main():
             "voice_gate": dispatcher.voice_gate,
             "get_priority": dispatcher.inflight_priority,
             "yield_to": dispatcher.more_important_waiting,
+            "still_wanted": dispatcher.inflight_still_wanted,
         },
         daemon=True,
         name="response-listener",
@@ -275,6 +276,10 @@ def main():
                     if settings.YT_API_KEY else None)
         youtube = YouTubeWebChat(room, fallback=fallback, alerts=alerts)
         Thread(target=youtube.run, daemon=True, name="youtube-chat").start()
+
+    # A reply to someone banned or timed out after it was dispatched is
+    # dropped right before she speaks — see Dispatcher.inflight_still_wanted.
+    dispatcher.moderation = room
 
     # --- Mock ---
     if TEST_MODE:

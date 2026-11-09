@@ -33,6 +33,25 @@ NICK = "justinfan12345"
 # parse PRIVMSG: :username!username@username.tmi.twitch.tv PRIVMSG #channel :message
 PRIVMSG_RE = re.compile(r'^:(\w+)!\w+@\w+\.tmi\.twitch\.tv PRIVMSG #\w+ :(.+)$')
 
+# Moderation, sent to every reader once twitch.tv/commands is requested:
+#   CLEARCHAT #chan :user   ban (no ban-duration tag) or timeout (with one)
+#   CLEARCHAT #chan         the whole chat cleared
+#   CLEARMSG  #chan :text   one message deleted; the login is in the tags
+CLEARCHAT_RE = re.compile(r'^:tmi\.twitch\.tv CLEARCHAT #\w+(?: :(\w+))?$')
+CLEARMSG_RE = re.compile(r'^:tmi\.twitch\.tv CLEARMSG #\w+ :(.*)$')
+
+
+def split_tags(line: str) -> tuple[dict, str]:
+    """'@a=1;b=2 :rest' -> ({'a': '1', 'b': '2'}, ':rest'). No tags: ({}, line)."""
+    if not line.startswith("@"):
+        return {}, line
+    raw, _, rest = line[1:].partition(" ")
+    tags = {}
+    for part in raw.split(";"):
+        key, _, value = part.partition("=")
+        tags[key] = value
+    return tags, rest
+
 
 class TwitchChatSource(ChatRoom):
 
@@ -70,7 +89,10 @@ class TwitchChatSource(ChatRoom):
         def send(msg: str):
             sock.sendall((msg + "\r\n").encode("utf-8"))
 
-        # anonymous auth
+        # anonymous auth. commands: bans, timeouts and deleted messages reach
+        # us, so she stops answering someone the streamer just removed.
+        # tags: which login a deleted message belonged to, and timeouts' length.
+        send("CAP REQ :twitch.tv/commands twitch.tv/tags")
         send(f"NICK {NICK}")
         send(f"JOIN #{channel}")
 
@@ -106,17 +128,37 @@ class TwitchChatSource(ChatRoom):
                     send("PONG :tmi.twitch.tv")
                     continue
 
-                # parse PRIVMSG
-                match = PRIVMSG_RE.match(line)
-                if match:
-                    user = match.group(1)
-                    text = match.group(2).strip()
-                    self._on_message(user, text)
+                self._on_line(line)
 
         try:
             sock.close()
         except Exception:
             pass
+
+    def _on_line(self, line: str) -> None:
+        tags, line = split_tags(line)
+
+        match = PRIVMSG_RE.match(line)
+        if match:
+            self._on_message(match.group(1), match.group(2).strip())
+            return
+
+        match = CLEARCHAT_RE.match(line)
+        if match:
+            user = match.group(1)
+            if not user:
+                print(f"[twitch] Chat cleared — "
+                      f"{self.clear_all()} waiting message(s) dropped")
+            elif tags.get("ban-duration"):
+                self.moderate("twitch", user, kind="timeout",
+                              seconds=float(tags["ban-duration"]))
+            else:
+                self.moderate("twitch", user, kind="ban")
+            return
+
+        match = CLEARMSG_RE.match(line)
+        if match and tags.get("login"):
+            self.delete_message("twitch", tags["login"], match.group(1))
 
     def _is_owner(self, user: str) -> bool:
         return bool(self.identity and self.identity.is_owner_chat(user))
