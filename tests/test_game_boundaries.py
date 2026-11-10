@@ -12,7 +12,8 @@ a kill buffer, a "she just spoke" timestamp — and nothing would say so.
 So instead of listing fields, this plays a whole game, starts the next one,
 and compares the source with a brand-new one that only ever saw the second
 game. Any difference is a leak. Only things meant to last the whole stream
-(her temper, who he is, the quote pools) are excused, by name.
+(her temper, who he is, the quote pools, which angles she has already used)
+are excused, by name.
 """
 
 import sys
@@ -31,7 +32,7 @@ FAILURES: list[str] = []
 
 # Meant to outlive a game. Anything else that differs is a leak.
 STREAM_LONG = {"temper", "_unhandled_logged", "queue", "identity", "client",
-               "notes", "_quotes", "on_active_change", "_fetch"}
+               "notes", "_quotes", "on_active_change", "_fetch", "angles"}
 
 ME = "Серый Экран#RU"
 A_GAME = [
@@ -116,6 +117,8 @@ def main():
           "; ".join(leaks[:5]))
     check("and her temper DID carry the lost game (stream-long, on purpose)",
           len(played.temper.games) == 1 and fresh.temper.games == [])
+    check("and so did the angles she used, so game two does not open the same",
+          len(played.angles._used) > len(fresh.angles._used))
 
     print()
     if FAILURES:
