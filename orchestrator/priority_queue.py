@@ -60,6 +60,21 @@ class SignalQueue:
             self._drain_expired()
             return len(self._heap)
 
+    def remove_where(self, predicate) -> int:
+        """
+        Take out every waiting signal the predicate matches; how many went.
+
+        For moderation: a viewer banned or timed out must not still be
+        answered by a reply that was already queued when the ban landed.
+        """
+        with self._lock:
+            keep = [item for item in self._heap if not predicate(item[2])]
+            removed = len(self._heap) - len(keep)
+            if removed:
+                heapq.heapify(keep)
+                self._heap = keep
+            return removed
+
     def clear(self) -> None:
         with self._lock:
             self._heap.clear()

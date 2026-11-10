@@ -154,6 +154,7 @@ def start_response_listener(
     voice_gate=None,
     get_priority: Callable[[], int] | None = None,
     yield_to: Callable[[], str] | None = None,
+    still_wanted: Callable[[], bool] | None = None,
 ):
     """
     Blocking consumer — run in a daemon thread.
@@ -326,6 +327,14 @@ def start_response_listener(
             print(f"[response] Dropped — you are still talking after "
                   f"{settings.VOICE_MAX_DEFER:.0f}s: {opening[0][:50]}")
             session_log.get().finished("dropped_gate")
+            return
+
+        # The last moment a moderator can still stop it: the person she is
+        # answering was banned or timed out while the reply was being made.
+        if still_wanted is not None and not still_wanted():
+            print(f"[response] Dropped — that viewer was removed from chat: "
+                  f"{opening[0][:50]}")
+            session_log.get().finished("dropped_moderated")
             return
 
         # From here she is committed to the line, so the mic goes deaf until

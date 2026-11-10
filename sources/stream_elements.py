@@ -59,6 +59,7 @@ from collections import deque
 from pathlib import Path
 
 from app.settings import get_settings
+from orchestrator import session_log
 from orchestrator.models import Signal
 from orchestrator.priority_queue import SignalQueue
 from orchestrator.sanitize import Sanitizer, Tally
@@ -88,6 +89,14 @@ TYPE_ALIASES = {
     "sponsor": "subscriber",
     "superchat": "tip",
 }
+
+# Every query parameter StreamElements' own spec marks required for
+# GET /activities/{channel} (github.com/StreamElements/api-docs, api.yaml).
+# Only after and limit were sent until 2026-11-09, the night a Twitch follow
+# went unannounced; if the API enforces the spec, every poll was refused and
+# the refusal only ever reached the console. `types` is sent once per value.
+ACTIVITY_TYPES = ["follow", "subscriber", "tip", "cheer", "raid", "host",
+                  "superchat", "sponsor"]
 
 # More follows than this in one poll are read as one line. Alerts no longer
 # expire, so a follow-bot wave of two hundred would otherwise be two hundred
@@ -121,6 +130,10 @@ class StreamElementsSource:
         self._logged_types: set = set()
         self._turn: dict = {}
         self._running = True
+        # "full" (every documented parameter) until the API refuses it, then
+        # "minimal" (the old after+limit). Whichever works is recorded.
+        self._params_mode = "full"
+        self._noted: set = set()
 
     # -----------------------------------------------------------------
     # the network edge — replace this to change transport
@@ -169,34 +182,70 @@ class StreamElementsSource:
             print(f"[se] Could not resolve the channel: {e}")
             return ""
 
+    def note(self, state: str, once: bool = True, **fields) -> None:
+        """
+        What the alerts source is doing, in the console AND the session log.
+
+        Its status used to reach the console only, so a session log with no
+        alerts in it could not say whether nobody followed, the token was
+        missing, or every poll was being refused. Each distinct state is
+        recorded once (errors per status code), so a dead feed does not
+        write a line every four seconds.
+        """
+        key = (state, fields.get("status"))
+        if once and key in self._noted:
+            return
+        self._noted.add(key)
+        print(f"[se] {state} {fields if fields else ''}".rstrip())
+        session_log.get().mark("alerts", state=state, **fields)
+
+    def _params(self) -> dict:
+        now = time.time()
+        stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))
+        after = stamp(now - settings.SE_LOOKBACK_MINUTES * 60)
+        if self._params_mode == "minimal":
+            return {"after": after, "limit": 50}
+        return {"after": after, "before": stamp(now + 60), "limit": 100,
+                "mincheer": 0, "minhost": 0, "minsub": 0, "mintip": 0,
+                "origin": "feed", "types": ACTIVITY_TYPES}
+
     def _fetch(self) -> list:
         """Recent activities, newest first. [] on any failure."""
         requests = self._requests()
         if requests is None:
             return []
 
-        window = settings.SE_LOOKBACK_MINUTES
-        after = time.strftime("%Y-%m-%dT%H:%M:%S.000Z",
-                              time.gmtime(time.time() - window * 60))
         try:
             response = requests.get(
                 f"{API}/activities/{self.channel}",
                 headers=self._headers(),
-                params={"after": after, "limit": 50},
+                params=self._params(),
                 timeout=10,
             )
-            if response.status_code in (401, 403):
-                print(f"[se] Token rejected ({response.status_code}) — "
-                      f"check RAVYN_SE_JWT")
+            status = response.status_code
+            if status in (401, 403):
+                self.note("token_rejected", status=status,
+                          hint="check RAVYN_SE_JWT")
                 return []
-            response.raise_for_status()
+            if status in (400, 422) and self._params_mode == "full":
+                # The spec's parameter set refused: say what it said, and
+                # fall back to the request that was sent before.
+                self.note("full_params_refused", status=status,
+                          body=(getattr(response, "text", "") or "")[:300])
+                self._params_mode = "minimal"
+                return self._fetch()
+            if status >= 400:
+                self.note("api_error", status=status, mode=self._params_mode,
+                          body=(getattr(response, "text", "") or "")[:300])
+                return []
             data = response.json()
+            self.note("feed_ok", mode=self._params_mode)
             return data if isinstance(data, list) else data.get("docs", [])
         except Exception as e:
             # Quiet on the ordinary ones: a dropped connection every few
             # polls would bury the log it shares with the game source.
             if not isinstance(e, (requests.ConnectionError, requests.Timeout)):
-                print(f"[se] API error: {e}")
+                self.note("api_error", error=str(e)[:200])
             return []
 
     # -----------------------------------------------------------------
@@ -364,7 +413,7 @@ class StreamElementsSource:
     # -----------------------------------------------------------------
 
     def _handle(self, activity: dict, announce: bool = True) -> Signal | None:
-        event = self._take(activity)
+        event = self._take(activity, log=announce)
         if event is None or not announce:
             return None            # first pass: remember, do not replay
         return self._push(event)
@@ -379,7 +428,7 @@ class StreamElementsSource:
               f"{event['currency']}{event['amount']:g} -> {signal.text[:60]}")
         return signal
 
-    def _take(self, activity: dict) -> dict | None:
+    def _take(self, activity: dict, log: bool = True) -> dict | None:
         """Parse and dedupe one activity; the event if it is new and handled."""
         event = self._parse_activity(activity)
         if event is None or event["id"] in self._seen_set:
@@ -389,8 +438,11 @@ class StreamElementsSource:
         if len(self._seen_set) > SEEN_LIMIT * 2:
             self._seen_set = set(self._seen)
         if event["type"] != TIP and event["type"] not in ALERT_TYPES:
-            print(f"[se] Ignoring activity type {event['type']!r}")
+            self.note("ignored_type", type=event["type"])
             return None
+        if log:
+            self.note("received", once=False, type=event["type"],
+                      user=event["user"], amount=event["amount"])
         return event
 
     def push_external(self, event: dict) -> Signal | None:
@@ -403,6 +455,9 @@ class StreamElementsSource:
             return None
         self._seen_set.add(event["id"])
         self._seen.append(event["id"])
+        self.note("received", once=False, type=event["type"],
+                  user=event.get("user", ""), amount=event.get("amount", 0),
+                  platform=event.get("platform", ""))
         try:
             return self._push(event)
         except Exception as e:
@@ -455,13 +510,14 @@ class StreamElementsSource:
     def run(self) -> None:
         """Blocking. Run in a daemon thread."""
         if not self.token:
-            print("[se] Disabled — no token. Set RAVYN_SE_JWT to switch "
-                  "alerts and donations on.")
+            self.note("disabled_no_token",
+                      hint="set RAVYN_SE_JWT to switch alerts and donations on")
             return
 
         self.channel = self._resolve_channel()
         if not self.channel:
-            print("[se] Disabled — no channel id.")
+            self.note("disabled_no_channel",
+                      hint="set RAVYN_SE_CHANNEL, or check the token")
             return
 
         # Everything already in the window is remembered and NOT spoken: a
@@ -469,9 +525,8 @@ class StreamElementsSource:
         existing = self._fetch()
         for activity in existing:
             self._handle(activity, announce=False)
-        print(f"[se] Listening — {len(existing)} recent activity(ies) marked "
-              f"as already seen, polling every "
-              f"{settings.SE_POLL_INTERVAL:.0f}s")
+        self.note("listening", already_seen=len(existing),
+                  poll_s=settings.SE_POLL_INTERVAL)
 
         while self._running:
             time.sleep(settings.SE_POLL_INTERVAL)

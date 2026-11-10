@@ -13,6 +13,7 @@ The audit of 2026-11-07, after a new follower went ungreeted. Across the
   - YouTube Super Chats and memberships were skipped as "not chat lines"
 """
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -303,6 +304,77 @@ def test_gift_bombs_and_follow_waves_are_one_line():
           and signals[0].context.get("event_type") == "sub")
 
 
+class FakeResponse:
+    def __init__(self, status, body=None, text=""):
+        self.status_code, self._body, self.text = status, body, text
+
+    def json(self):
+        return self._body
+
+
+def fake_api(answers):
+    """A requests stand-in: records each call, answers from the list."""
+    import types as _types
+    calls = []
+
+    def get(url, headers=None, params=None, timeout=None):
+        calls.append(dict(params or {}))
+        return answers.pop(0)
+    mod = _types.SimpleNamespace(get=get, ConnectionError=ConnectionError,
+                                 Timeout=TimeoutError)
+    return mod, calls
+
+
+def test_the_feed_is_asked_properly_and_says_how_it_went():
+    # 2026-11-09: a Twitch viewer said they followed; no alert, and nothing
+    # in either log said why. The request sent only after+limit, where the
+    # API's own spec requires nine parameters, and any refusal went to the
+    # console alone.
+    print("\n--- the activities request, and its trail in the session log ---")
+    import orchestrator.session_log as sl
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        log = sl.init(tmp)
+        s, _ = se()
+        s.channel = "chan"
+        api, calls = fake_api([FakeResponse(200, [])])
+        s._requests = lambda: api
+        s._fetch()
+        p = calls[0]
+        check("every parameter the spec requires is sent",
+              {"after", "before", "limit", "mincheer", "minhost", "minsub",
+               "mintip", "origin", "types"} <= set(p), str(sorted(p)))
+        check("follows are asked for by name", "follow" in p["types"])
+
+        s, _ = se()
+        s.channel = "chan"
+        api, calls = fake_api([FakeResponse(400, text="bad param"),
+                               FakeResponse(200, [activity("f1", "follow",
+                                                           username="Ann")])])
+        s._requests = lambda: api
+        got = s._fetch()
+        check("refused: it falls back to the old request, once",
+              len(calls) == 2 and set(calls[1]) == {"after", "limit"}
+              and len(got) == 1, str(calls))
+        s.announce(got)
+
+        s, _ = se()
+        s.token = ""
+        s.run()
+
+        marks = [json.loads(l) for l in log.path.read_text().splitlines()
+                 if '"alerts"' in l]
+        states = [m.get("state") for m in marks]
+        check("the refusal is in the session log, with what the API said",
+              any(m.get("state") == "full_params_refused"
+                  and "bad param" in m.get("body", "") for m in marks), str(states))
+        check("so is the follow that came through",
+              any(m.get("state") == "received" and m.get("type") == "follower"
+                  for m in marks), str(states))
+        check("and a missing token", "disabled_no_token" in states, str(states))
+        sl._LOG = None
+
+
 # ================================================================ youtube
 def test_youtube_paid_events():
     print("\n--- YouTube Super Chats and memberships are thanked ---")
@@ -370,6 +442,7 @@ def main():
     test_numbers_say_whose_they_are()
     test_streamelements_type_names()
     test_gift_bombs_and_follow_waves_are_one_line()
+    test_the_feed_is_asked_properly_and_says_how_it_went()
     test_youtube_paid_events()
 
     print()
