@@ -33,6 +33,7 @@ length alone, which is what a non-league stream looks like.
 
 from __future__ import annotations
 
+import random
 import time
 from dataclasses import dataclass, field
 
@@ -69,6 +70,44 @@ REGISTER_INSTRUCTION = {
         "lands."
     ),
 }
+
+# SUPPORTIVE said one thing, so she did too. On 2026-11-10 a supportive game
+# had 14 of 41 lines flagged as repeats: one paragraph on every prompt came
+# back as one pep talk in six wordings ("you've got the gold and the numbers,
+# keep pushing while they scramble"). These are different ways of being on his
+# side, dealt without replacement so the same one never rides two lines
+# running. The first is the original, which stays the register's definition.
+SUPPORTIVE_INSTRUCTIONS = (
+    REGISTER_INSTRUCTION[SUPPORTIVE],
+    (
+        "YOUR TEMPER RIGHT NOW: you are on his side and you are not hiding "
+        "it. Name one thing he is doing right in this moment, plainly, and "
+        "stop there. No pep talk, no advice, no barb at the end."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are on his side and you are not hiding "
+        "it. You are calm because you trust him. Say it quietly and briefly, "
+        "one short sentence if it fits. Do not tell him what to do next. No "
+        "barb at the end."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are on his side and you are not hiding "
+        "it. You are enjoying watching him play tonight, so let that show. "
+        "Pleased, a little smug on his behalf. No encouragement speech, no "
+        "barb at the end."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are on his side and you are not hiding "
+        "it. Tease him the way you tease someone you are proud of: fond, no "
+        "sting in it. Do not reassure him and do not tell him to keep going."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are on his side and you are not hiding "
+        "it. React to the event itself and nothing more. Your warmth is in "
+        "how you say it, not in telling him how well he is doing. No barb at "
+        "the end."
+    ),
+)
 
 # The harshest tone each register will allow out, whatever the rulebook says.
 # This is the clamp that makes SUPPORTIVE mean something.
@@ -188,6 +227,8 @@ class Temper:
     games: list = field(default_factory=list)
     nudge: float = 0.0              # manual offset, for a hand on the dial
     _harsh_streak: int = 0
+    _supportive_bag: list = field(default_factory=list)
+    _last_supportive: str = ""
 
     # -----------------------------------------------------------------
 
@@ -296,7 +337,21 @@ class Temper:
         return HEAT_FACTOR[self.register()]
 
     def instruction(self) -> str:
-        return REGISTER_INSTRUCTION[self.register()]
+        register = self.register()
+        if register != SUPPORTIVE:
+            return REGISTER_INSTRUCTION[register]
+        return self._next_supportive()
+
+    def _next_supportive(self) -> str:
+        """Every wording once before any comes round again, never twice running."""
+        if not self._supportive_bag:
+            bag = list(SUPPORTIVE_INSTRUCTIONS)
+            random.shuffle(bag)
+            if bag[-1] == self._last_supportive:
+                bag[0], bag[-1] = bag[-1], bag[0]
+            self._supportive_bag = bag
+        self._last_supportive = self._supportive_bag.pop()
+        return self._last_supportive
 
     def state(self) -> dict:
         """For the session log and the game-end marker."""
