@@ -32,7 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orchestrator import tone as tone_engine                       # noqa: E402
 from orchestrator.temper import (                                  # noqa: E402
-    MAX_HARSH_STREAK, NEGATIVE, NEUTRAL, REGISTER_INSTRUCTION, REGISTERS,
+    MAX_HARSH_STREAK, NEGATIVE, NEGATIVE_INSTRUCTIONS, NEUTRAL,
+    REGISTER_INSTRUCTION, REGISTERS,
     SUPPORTIVE, SUPPORTIVE_INSTRUCTIONS, GameResult, Temper,
 )
 
@@ -262,6 +263,34 @@ def test_supportive_is_not_one_sentence():
     check("every wording comes up before any repeats",
           all(len(set(dealt[i:i + size])) == size
               for i in range(0, len(dealt), size)))
+
+    print("\n--- and negative, the same way ---")
+    check("several wordings, all different",
+          len(set(NEGATIVE_INSTRUCTIONS)) == len(NEGATIVE_INSTRUCTIONS) >= 5)
+    check("the original is one of them",
+          REGISTER_INSTRUCTION[NEGATIVE] in NEGATIVE_INSTRUCTIONS)
+    check("each is out of patience and none is contempt",
+          all("out of patience" in text
+              and "never contempt for a stranger" in text.lower()
+              for text in NEGATIVE_INSTRUCTIONS))
+    check("only the original hands her 'this exact mistake all evening'",
+          sum("all evening" in text or "exact mistake" in text
+              for text in NEGATIVE_INSTRUCTIONS) == 1)
+
+    sour = Temper()
+    for _ in range(3):
+        sour.record_game(lost())
+    check("three bad losses is a negative evening",
+          sour.register() == NEGATIVE, sour.register())
+    dealt = [sour.instruction() for _ in range(len(NEGATIVE_INSTRUCTIONS) * 4)]
+    check("never the same wording twice running",
+          all(a != b for a, b in zip(dealt, dealt[1:])))
+    size = len(NEGATIVE_INSTRUCTIONS)
+    check("every wording comes up before any repeats",
+          all(len(set(dealt[i:i + size])) == size
+              for i in range(0, len(dealt), size)))
+    check("and only negative ones",
+          set(dealt) == set(NEGATIVE_INSTRUCTIONS))
 
     level = Temper()
     check("neutral still says one thing",
