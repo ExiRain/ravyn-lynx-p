@@ -151,6 +151,7 @@ def test_tone_instruction():
 
     # 2026-11-11: one warm sentence on 20 prompts came back as "honestly,
     # I'm just glad" seven times. The wording moves, and names no feeling.
+    tone._bags.clear()          # a fresh deck: earlier checks drew from it
     warm = [tone.instruction("warm") for _ in range(10)]
     check("warm is never worded the same twice running",
           all(a != b for a, b in zip(warm, warm[1:])))
