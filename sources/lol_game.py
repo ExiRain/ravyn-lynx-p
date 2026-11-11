@@ -29,7 +29,7 @@ from orchestrator.champion_notes import ChampionNotes
 from orchestrator.identity import Identity
 from orchestrator.game_angles import NOTE_ANGLES, AngleChooser
 from orchestrator.league_client import LeagueClient, result as client_result
-from orchestrator.game_state import GameState
+from orchestrator.game_state import EARLY_UNTIL, GameState
 from orchestrator.models import Signal
 from orchestrator.priority_queue import SignalQueue
 from app.settings import get_settings
@@ -1168,11 +1168,14 @@ class LolGameSource:
         if len(recent) < TEAMFIGHT_MIN_KILLS:
             return
         if not any(k["involved_me"] for k in recent):
-            seed = self._pick_quote("teamfight_missed")
-            if isinstance(seed, str) and seed:
-                pass
+            # Every quote in the pool asks where he was. Early on he has a
+            # lane, so the event is stated plainly and the angle does the rest.
+            if self.state.minutes < EARLY_UNTIL:
+                seed = "A fight broke out somewhere else on the map."
             else:
-                seed = "A fight happened without you."
+                seed = self._pick_quote("teamfight_missed")
+                if not (isinstance(seed, str) and seed):
+                    seed = "A fight happened without you."
             self._push_event("TeamfightMissed", seed, {}, "TeamfightMissed")
             self._recent_kills = [k for k in self._recent_kills if k["time"] < window_start]
 

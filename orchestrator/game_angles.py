@@ -38,18 +38,13 @@ always fire. tests/test_game_variety.py enforces the floor.
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
 from typing import Callable
 
-from orchestrator.game_state import GameState
-
-# How many recent angle ids to remember. Roughly "she will not reuse an angle
-# inside the same skirmish", which is the window a viewer actually notices.
-RECENT_MEMORY = 10
+from orchestrator.game_state import EARLY_UNTIL, GameState
 
 # Minimum always-eligible angles per event type. Three is what it takes to
-# never repeat back to back once the deque holds the two most recent.
+# never repeat back to back when nothing situational is true.
 MIN_UNCONDITIONAL = 3
 
 
@@ -450,11 +445,6 @@ INHIB = [
 # =============================================================
 
 TEAMFIGHT_MISSED = [
-    Angle("missed_where_were_you",
-          "A fight happened and he was not in it. Ask where he was, and mean "
-          "it — you are keeping score.",
-          _always),
-
     Angle("missed_farming_defence",
           "He was farming instead, and the CS number either justifies it or "
           "does not. Use the number.",
@@ -470,9 +460,27 @@ TEAMFIGHT_MISSED = [
           "his behalf that it worked.",
           lambda s, e: s.kill_lead > 0),
 
+    # Three kills somewhere at four minutes is not a fight he skipped: he has
+    # a lane. On 2026-11-10 she asked where he was two minutes into a game.
+    Angle("missed_early_not_his",
+          "It is early and he has his own lane to mind. This fight was "
+          "theirs to take. Judge them for taking it; do not ask where he "
+          "was.",
+          lambda s, e: s.minutes < EARLY_UNTIL),
+
+    Angle("missed_where_were_you",
+          "A fight happened and he was not in it. Ask where he was, and mean "
+          "it — you are keeping score.",
+          lambda s, e: s.minutes >= EARLY_UNTIL),
+
     Angle("missed_no_call",
           "Nobody told him it was happening, and you are choosing to believe "
           "that. Defend him, sourly.",
+          _always),
+
+    Angle("missed_their_business",
+          "Talk about the fight and the people who were in it. He was not, "
+          "so leave him out of it entirely.",
           _always),
 
     Angle("missed_dry",
@@ -675,17 +683,25 @@ NOTE_ANGLES = frozenset({
 
 class AngleChooser:
     """
-    Picks an angle per event, remembering what it recently used.
+    Picks an angle per event, remembering what it has used.
 
-    One instance per source, cleared between games — a fresh game should be
-    allowed to open on the same angle the last one closed with.
+    One instance per source. It remembers every angle it has handed out, for
+    the whole session: the memory used to be the last ten picks across all
+    event types, cleared per game, so anything rarer than one event in ten
+    had been forgotten by the time it came round again and opened on the
+    first angle in its list every time. On 2026-11-10 all four missed fights
+    in three games were "where were you".
     """
 
-    def __init__(self, memory: int = RECENT_MEMORY):
-        self._recent: deque[str] = deque(maxlen=memory)
+    def __init__(self):
+        self._used: dict[str, int] = {}
+        self._tick = 0
 
     def reset(self) -> None:
-        self._recent.clear()
+        """
+        A new game. The memory is kept on purpose — see the class docstring —
+        so the second game does not open the way the first one did.
+        """
 
     def choose(self, event_type: str, state: GameState,
                extra: dict | None = None) -> Angle | None:
@@ -717,23 +733,14 @@ class AngleChooser:
             return None
 
         # Least recently used wins, so lower sorts better: -1 for an angle
-        # that is not in memory at all, then its position in the deque, oldest
-        # first. The LAST occurrence is what counts — an angle used at both
-        # ends of the window was, in fact, just used.
+        # never used, else the tick it was last used on.
         #
         # Ties keep list order, because min() returns the first minimal
         # element. That is why the generic fallback sits last in every list:
         # among equally unused angles the situation-driven ones win.
-        history = list(self._recent)
-
-        def staleness(angle: Angle) -> int:
-            for i in range(len(history) - 1, -1, -1):
-                if history[i] == angle.id:
-                    return i
-            return -1           # never used — as stale as it gets
-
-        chosen = min(eligible, key=staleness)
-        self._recent.append(chosen.id)
+        chosen = min(eligible, key=lambda a: self._used.get(a.id, -1))
+        self._used[chosen.id] = self._tick
+        self._tick += 1
 
         # The theme's opening is written per game, so it is carried in the
         # context rather than baked into the angle list.

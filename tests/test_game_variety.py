@@ -250,6 +250,43 @@ def test_flat_game_still_varies():
           f"always-eligible angles", not short, str(short))
 
 
+def test_rare_events_rotate_too():
+    """
+    A missed fight comes round once in a dozen events and once or twice a
+    game. The memory used to be the last ten picks, cleared per game, so it
+    had always forgotten the last one: four out of four were "where were you"
+    on 2026-11-10.
+    """
+    print("\n--- rare events rotate, across games too ---")
+
+    late = GameState()
+    late.update(snapshot(game_time=1500.0, my_kills=2, my_deaths=2),
+                "ORDER", MY_NAMES)
+
+    chooser = AngleChooser()
+    picked = []
+    for game in range(3):
+        chooser.reset()
+        for _ in range(2):
+            for _ in range(15):          # everything else that happens
+                chooser.choose("AllyDeath", late, {})
+            picked.append(chooser.choose("TeamfightMissed", late, {}).id)
+    check("six missed fights over three games never repeat one angle",
+          len(set(picked)) >= 5, str(picked))
+    check("and the accusing one is used at most once",
+          picked.count("missed_where_were_you") <= 1, str(picked))
+
+    early = GameState()
+    early.update(snapshot(game_time=240.0, my_kills=0, my_deaths=0),
+                 "ORDER", MY_NAMES)
+    fresh = AngleChooser()
+    opening = [fresh.choose("TeamfightMissed", early, {}).id for _ in range(8)]
+    check("in the laning phase she never asks where he was",
+          "missed_where_were_you" not in opening, str(opening))
+    check("but she does say it was not his fight",
+          "missed_early_not_his" in opening, str(opening))
+
+
 def test_angles_only_fire_on_true_facts():
     print("\n--- angles never invent facts ---")
     # A brand new game: no drakes, no kills, nothing measured.
@@ -454,6 +491,7 @@ def main():
     test_dragons_and_mood()
     test_angle_variety()
     test_flat_game_still_varies()
+    test_rare_events_rotate_too()
     test_angles_only_fire_on_true_facts()
     test_burst_decay()
     test_global_gap()
