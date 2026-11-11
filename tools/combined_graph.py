@@ -1,9 +1,10 @@
 """
-One knowledge graph of all of Ravyn: this PC repo and the notebook, joined.
+One knowledge graph of all of Ravyn: this PC repo, the notebook and the
+Godot avatar, joined.
 
     uv tool run --from graphifyy python tools/combined_graph.py
     uv tool run --from graphifyy python tools/combined_graph.py --refresh
-    uv tool run --from graphifyy python tools/combined_graph.py --nb ../ravyn-nb
+    uv tool run --from graphifyy python tools/combined_graph.py --nb ../ravyn-nb --godot ../ravyn-godot
 
 Writes, into graph/ (tracked):
 
@@ -11,19 +12,34 @@ Writes, into graph/ (tracked):
     GRAPH_REPORT.md   the summary: hubs, surprises, questions
     graph.json        query it:  graphify query "..." --graph graph/graph.json
 
-Each repo is mapped on its own first, with /graphify in Claude Code (or
-`graphify update .` for code only, free). That leaves graphify-out/graph.json
-in each. This merges the two. --refresh re-runs the free code pass in both
-repos first, so a code change shows up without re-reading the docs.
+The PC and the notebook are mapped on their own first, with /graphify in
+Claude Code (or `graphify update .` for code only, free). That leaves
+graphify-out/graph.json in each. --refresh re-runs the free code pass in
+both first, so a code change shows up without re-reading the docs.
 
-## Why the bridge
+Godot is mapped here, on every run, by tools/gdscript_graph.py: graphify
+cannot read GDScript, so /graphify there sees only the Live2D addon. If
+ravyn-godot is not checked out next to this repo, the graph is built
+without it and says so.
 
-The two halves never call each other's code: they talk only over RabbitMQ.
-Merged as-is, the graph had ZERO direct PC <-> notebook links — two islands
-touching only through shared libraries like json and pika. So the three
-queues are added as nodes, and each publish/consume edge is found by
-searching the real source line for its routing key on every run. A renamed
-queue or a moved call is reported, never silently drawn from a stale line.
+What the docs pass found (concepts, documents) is carried over from the
+last combined graph when a repo's own graph lacks it, so a machine with only
+the free code pass does not strip it out.
+
+## Why the bridges
+
+The three programs never call each other's code. The PC and the notebook
+talk only over RabbitMQ; the PC and Godot only over one WebSocket
+(`/ws/audio`: speech audio, lip sync, mood, visibility). Merged as-is the
+graph was islands touching only through shared libraries like json and
+pika. So the three queues and the WebSocket are added as nodes, and each
+edge to them is found by searching the real source line on every run. A
+renamed queue or a moved call is reported, never silently drawn from a
+stale line.
+
+Every text message the PC sends Godot ("START", "MOOD:", ...) is checked
+against the handlers in scripts/main.gd too: one that is sent and never
+handled is printed.
 
 The payload links (what one side writes, the other parses) are marked
 INFERRED: nothing in the code names the other side, the shape does.
@@ -44,7 +60,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "graph"
 
-PC, NB = "ravyn-lynx-p::", "ravyn-nb::"
+PC, NB, GD = "ravyn-lynx-p::", "ravyn-nb::", "ravyn-godot::"
 
 QUEUES = {
     "rabbitmq::ravyn_request": ("ravyn.request queue",
@@ -53,6 +69,12 @@ QUEUES = {
                                  "notebook -> PC: exactly one reply per request"),
     "rabbitmq::ravyn_log": ("ravyn.log queue",
                             "notebook -> PC: worker log lines, capped, drop-head"),
+}
+
+SOCKET = "websocket::ws_audio"
+SOCKETS = {
+    SOCKET: ("/ws/audio WebSocket",
+             "PC -> Godot: speech audio, lip sync, mood and visibility"),
 }
 
 # (side, file, regex on the line, node id, relation, queue). The line number
@@ -76,6 +98,35 @@ QUEUE_EDGES = [
     ("pc", "services/log_receiver.py", r"basic_consume\(queue=.*QUEUE_LOG",
      PC + "services_log_receiver_logreceiver_run", "consumes",
      "rabbitmq::ravyn_log"),
+]
+
+# The same, for the PC <-> Godot WebSocket. Only drawn when Godot is there.
+SOCKET_EDGES = [
+    ("pc", "services/audio_server.py", r"@app\.websocket\(\"/ws/audio\"\)",
+     PC + "services_audio_server_websocket_endpoint", "serves", SOCKET),
+    ("pc", "services/audio_server.py", r"await ws\.send_text\(msg\)",
+     PC + "services_audio_server_send_text_to_godot", "publishes_to", SOCKET),
+    ("pc", "services/audio_server.py", r"await ws\.send_bytes\(",
+     PC + "services_audio_server_send_bytes_to_godot", "publishes_to", SOCKET),
+    ("godot", "scripts/main.gd", r"connect_to_url\(ws_url\)",
+     GD + "scripts_main_ready", "connects_to", SOCKET),
+    ("godot", "scripts/main.gd", r"socket\.get_packet\(\)",
+     GD + "scripts_main_handle_websocket", "consumes", SOCKET),
+]
+
+# Each text message, and the PC function that sends it. Godot handles them
+# all in one function, so the links are per sender; INFERRED, like payloads.
+GODOT_HANDLER = GD + "scripts_main_handle_websocket"
+MESSAGES = [
+    ("SHOW:", PC + "services_audio_server_set_visibility"),
+    ("MOOD:", PC + "services_audio_server_begin_utterance"),
+    ("TIRED:", PC + "services_audio_server_begin_utterance"),
+    ("START", PC + "services_audio_server_begin_utterance"),
+    ("RATE:", PC + "services_audio_server_push_sentence"),
+    ("MOUTH:", PC + "services_audio_server_push_sentence"),
+    ("PHONEME:", PC + "services_audio_server_push_sentence"),
+    ("END", PC + "services_audio_server_end_utterance"),
+    ("FACE:", PC + "services_audio_server_send_face"),
 ]
 
 # What one side writes is what the other parses. Inferred from shape.
@@ -107,10 +158,11 @@ def find_line(path: Path, pattern: str) -> str | None:
     return None
 
 
-def bridges(ids: set, pc_root: Path, nb_root: Path) -> tuple[list, list]:
+def bridges(ids: set, roots: dict) -> tuple[list, list]:
     out, problems = [], []
-    for side, rel_file, pattern, node, relation, queue in QUEUE_EDGES:
-        root = pc_root if side == "pc" else nb_root
+    wanted = QUEUE_EDGES + (SOCKET_EDGES if "godot" in roots else [])
+    for side, rel_file, pattern, node, relation, queue in wanted:
+        root = roots[side]
         loc = find_line(root / rel_file, pattern)
         if node not in ids:
             problems.append(f"node {node} is gone — was it renamed?")
@@ -127,6 +179,54 @@ def bridges(ids: set, pc_root: Path, nb_root: Path) -> tuple[list, list]:
     return out, problems
 
 
+def message_links(ids: set, roots: dict) -> tuple[list, list]:
+    """
+    PC sender -> Godot handler, one link per sender, for the messages both
+    sides know. A message only one side knows is returned as a note: it is a
+    fact about the code, not a fault in the graph.
+    """
+    out, notes, linked = [], [], set()
+    pc = (roots["pc"] / "services/audio_server.py").read_text(encoding="utf-8")
+    gd = (roots["godot"] / "scripts/main.gd").read_text(encoding="utf-8")
+    for message, sender in MESSAGES:
+        sent = re.search(rf'send_text_to_godot\(f?"{re.escape(message)}', pc)
+        handled = re.search(rf'msg(?: == |\.begins_with\()"{re.escape(message)}',
+                            gd)
+        if sent and not handled:
+            notes.append(f'the PC sends "{message}" and scripts/main.gd has '
+                         f"no handler for it")
+        elif handled and not sent:
+            notes.append(f'scripts/main.gd handles "{message}" and the PC '
+                         f"never sends it")
+        elif sent and sender in ids and GODOT_HANDLER in ids \
+                and sender not in linked:
+            linked.add(sender)
+            out.append(edge(sender, GODOT_HANDLER, "shares_data_with",
+                            "services/audio_server.py", None, "INFERRED", 0.95))
+    return out, notes
+
+
+def carried_over(g: dict, previous: Path) -> tuple[list, list]:
+    """
+    Docs-pass nodes and links that the last combined graph had and this
+    merge lacks — see the module docstring.
+    """
+    try:
+        old = json.loads(previous.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [], []
+    ids = {n["id"] for n in g["nodes"]}
+    nodes = [n for n in old["nodes"]
+             if n.get("_origin") == "semantic" and n["id"] not in ids]
+    ids |= {n["id"] for n in nodes}
+    have = {(l["source"], l["target"], l["relation"]) for l in g["links"]}
+    links = [l for l in old["links"]
+             if l.get("_origin") == "semantic"
+             and l["source"] in ids and l["target"] in ids
+             and (l["source"], l["target"], l["relation"]) not in have]
+    return nodes, links
+
+
 def run(cmd: list, cwd: Path) -> None:
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -137,8 +237,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--nb", default=str(ROOT.parent / "ravyn-nb"),
                     help="the notebook repo (default: ../ravyn-nb)")
+    ap.add_argument("--godot", default=str(ROOT.parent / "ravyn-godot"),
+                    help="the Godot repo (default: ../ravyn-godot)")
     ap.add_argument("--refresh", action="store_true",
-                    help="re-run the free code pass in both repos first")
+                    help="re-run the free code pass in the PC and notebook "
+                         "repos first")
     args = ap.parse_args()
 
     try:
@@ -162,25 +265,68 @@ def main() -> int:
             sys.exit(f"No graph for the {name} repo at {repo}. Build it first:\n"
                      f"  /graphify .   (in Claude Code, in {repo})")
 
+    roots = {"pc": ROOT, "nb": nb_root}
+    graphs = [ROOT / "graphify-out" / "graph.json",
+              nb_root / "graphify-out" / "graph.json"]
+    godot_root = Path(args.godot).resolve()
+    if (godot_root / "project.godot").exists():
+        import gdscript_graph
+        n, e = gdscript_graph.write(godot_root)
+        print(f"Mapped the Godot scripts: {n} nodes, {e} edges")
+        roots["godot"] = godot_root
+        graphs.append(godot_root / "graphify-out" / "graph.json")
+    else:
+        print(f"No Godot repo at {godot_root} — building without it")
+
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         (work / "graphify-out").mkdir()
-        run(["graphify", "merge-graphs",
-             str(ROOT / "graphify-out" / "graph.json"),
-             str(nb_root / "graphify-out" / "graph.json"),
+        run(["graphify", "merge-graphs", *map(str, graphs),
              "--out", "graphify-out/graph.json"], work)
 
         g = json.loads((work / "graphify-out" / "graph.json").read_text())
+        kept_nodes, kept_links = carried_over(g, OUT / "graph.json")
+        if kept_nodes:
+            print(f"Carried over {len(kept_nodes)} docs-pass nodes from the "
+                  f"last combined graph")
+        g["nodes"] += kept_nodes
+        g["links"] += kept_links
+
         ids = {n["id"] for n in g["nodes"]}
-        links, problems = bridges(ids, ROOT, nb_root)
+        links, problems = bridges(ids, roots)
         for p in problems:
             print(f"  ! bridge skipped: {p}")
+        sockets = {}
+        if "godot" in roots:
+            sockets = SOCKETS
+            more, notes = message_links(ids, roots)
+            links += more
+            for note in notes:
+                print(f"  note: {note}")
 
         queue_nodes = [{"id": q, "label": label, "file_type": "concept",
                         "repo": "rabbitmq", "source_file": None,
                         "source_location": None, "rationale": why,
                         "_origin": "bridge"}
                        for q, (label, why) in QUEUES.items()]
+        queue_nodes += [{"id": q, "label": label, "file_type": "concept",
+                         "repo": "websocket", "source_file": None,
+                         "source_location": None, "rationale": why,
+                         "_origin": "bridge"}
+                        for q, (label, why) in sockets.items()]
+        contracts = []
+        if sockets:
+            contracts.append({
+                "id": "pc_godot_avatar_contract",
+                "label": "PC <-> Godot avatar contract",
+                "nodes": [SOCKET,
+                          PC + "services_audio_server_websocket_endpoint",
+                          PC + "services_audio_server_send_text_to_godot",
+                          PC + "services_audio_server_send_bytes_to_godot",
+                          GODOT_HANDLER],
+                "relation": "participate_in", "confidence": "EXTRACTED",
+                "confidence_score": 1.0, "source_file": None})
+        repos["Godot"] = godot_root
         tokens = sum(json.loads((r / "graphify-out" / "cost.json").read_text())
                      .get("total_input_tokens", 0)
                      for r in repos.values()
@@ -196,7 +342,7 @@ def main() -> int:
                     NB + "adapters_mq_rabbitmq_start_worker_callback",
                     PC + "services_response_listener_start_response_listener_handle"],
                 "relation": "participate_in", "confidence": "EXTRACTED",
-                "confidence_score": 1.0, "source_file": None}],
+                "confidence_score": 1.0, "source_file": None}] + contracts,
             "input_tokens": tokens, "output_tokens": 0,
         }
 
@@ -213,8 +359,11 @@ def main() -> int:
                 d = G.nodes[m]
                 if d.get("repo") == "rabbitmq":
                     names["PC <-> Notebook Queues"] += 3
+                elif d.get("repo") == "websocket":
+                    names["PC <-> Godot WebSocket"] += 3
                 elif d.get("community_name"):
-                    side = {"ravyn-lynx-p": "PC", "ravyn-nb": "NB"}.get(
+                    side = {"ravyn-lynx-p": "PC", "ravyn-nb": "NB",
+                            "ravyn-godot": "Godot"}.get(
                         d.get("repo"), "lib")
                     names[f"{d['community_name']} ({side})"] += 1
             labels[cid] = (names.most_common(1)[0][0] if names
