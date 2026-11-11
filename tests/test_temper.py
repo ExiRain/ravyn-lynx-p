@@ -32,8 +32,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from orchestrator import tone as tone_engine                       # noqa: E402
 from orchestrator.temper import (                                  # noqa: E402
-    MAX_HARSH_STREAK, NEGATIVE, NEUTRAL, REGISTER_INSTRUCTION, REGISTERS,
-    SUPPORTIVE, GameResult, Temper,
+    MAX_HARSH_STREAK, NEGATIVE, NEGATIVE_INSTRUCTIONS, NEUTRAL,
+    REGISTER_INSTRUCTION, REGISTERS,
+    SUPPORTIVE, SUPPORTIVE_INSTRUCTIONS, GameResult, Temper,
 )
 
 FAILURES: list[str] = []
@@ -234,7 +235,67 @@ def test_state_is_loggable():
 
     instruction = t.instruction()
     check("the instruction matches the register",
-          instruction == REGISTER_INSTRUCTION[state["temper"]])
+          state["temper"] == SUPPORTIVE
+          and instruction in SUPPORTIVE_INSTRUCTIONS)
+
+
+def test_supportive_is_not_one_sentence():
+    print("\n--- supportive, said more than one way ---")
+    check("several wordings, all different",
+          len(set(SUPPORTIVE_INSTRUCTIONS)) == len(SUPPORTIVE_INSTRUCTIONS) >= 5)
+    check("the original is one of them",
+          REGISTER_INSTRUCTION[SUPPORTIVE] in SUPPORTIVE_INSTRUCTIONS)
+    check("each is still on his side, with no sting",
+          all("on his side" in text and ("no barb" in text.lower()
+                                         or "no sting" in text.lower())
+              for text in SUPPORTIVE_INSTRUCTIONS))
+    pep = ("he can do this", "game is not over", "better than the people")
+    check("only the original hands her the pep talk",
+          sum(any(p in text for p in pep)
+              for text in SUPPORTIVE_INSTRUCTIONS) == 1)
+
+    t = Temper()
+    t.record_game(won())
+    dealt = [t.instruction() for _ in range(len(SUPPORTIVE_INSTRUCTIONS) * 4)]
+    check("never the same wording twice running",
+          all(a != b for a, b in zip(dealt, dealt[1:])))
+    size = len(SUPPORTIVE_INSTRUCTIONS)
+    check("every wording comes up before any repeats",
+          all(len(set(dealt[i:i + size])) == size
+              for i in range(0, len(dealt), size)))
+
+    print("\n--- and negative, the same way ---")
+    check("several wordings, all different",
+          len(set(NEGATIVE_INSTRUCTIONS)) == len(NEGATIVE_INSTRUCTIONS) >= 5)
+    check("the original is one of them",
+          REGISTER_INSTRUCTION[NEGATIVE] in NEGATIVE_INSTRUCTIONS)
+    check("each is out of patience and none is contempt",
+          all("out of patience" in text
+              and "never contempt for a stranger" in text.lower()
+              for text in NEGATIVE_INSTRUCTIONS))
+    check("only the original hands her 'this exact mistake all evening'",
+          sum("all evening" in text or "exact mistake" in text
+              for text in NEGATIVE_INSTRUCTIONS) == 1)
+
+    sour = Temper()
+    for _ in range(3):
+        sour.record_game(lost())
+    check("three bad losses is a negative evening",
+          sour.register() == NEGATIVE, sour.register())
+    dealt = [sour.instruction() for _ in range(len(NEGATIVE_INSTRUCTIONS) * 4)]
+    check("never the same wording twice running",
+          all(a != b for a, b in zip(dealt, dealt[1:])))
+    size = len(NEGATIVE_INSTRUCTIONS)
+    check("every wording comes up before any repeats",
+          all(len(set(dealt[i:i + size])) == size
+              for i in range(0, len(dealt), size)))
+    check("and only negative ones",
+          set(dealt) == set(NEGATIVE_INSTRUCTIONS))
+
+    level = Temper()
+    check("neutral still says one thing",
+          level.instruction() == REGISTER_INSTRUCTION[NEUTRAL]
+          == level.instruction())
 
 
 def test_kda_is_honest():
@@ -257,6 +318,7 @@ def main() -> int:
     test_the_streak_is_bounded()
     test_harder_means_less_often()
     test_state_is_loggable()
+    test_supportive_is_not_one_sentence()
     test_kda_is_honest()
 
     print()

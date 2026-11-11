@@ -33,6 +33,7 @@ length alone, which is what a non-league stream looks like.
 
 from __future__ import annotations
 
+import random
 import time
 from dataclasses import dataclass, field
 
@@ -68,6 +69,86 @@ REGISTER_INSTRUCTION = {
         "stranger, and never a speech: the shorter it is, the harder it "
         "lands."
     ),
+}
+
+# SUPPORTIVE said one thing, so she did too. On 2026-11-10 a supportive game
+# had 14 of 41 lines flagged as repeats: one paragraph on every prompt came
+# back as one pep talk in six wordings ("you've got the gold and the numbers,
+# keep pushing while they scramble"). These are different ways of being on his
+# side, dealt without replacement so the same one never rides two lines
+# running. The first is the original, which stays the register's definition.
+SUPPORTIVE_INSTRUCTIONS = (
+    REGISTER_INSTRUCTION[SUPPORTIVE],
+    (
+        "YOUR TEMPER RIGHT NOW: you are on his side and you are not hiding "
+        "it. Name one thing he is doing right in this moment, plainly, and "
+        "stop there. No pep talk, no advice, no barb at the end."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are on his side and you are not hiding "
+        "it. You are calm because you trust him. Say it quietly and briefly, "
+        "one short sentence if it fits. Do not tell him what to do next. No "
+        "barb at the end."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are on his side and you are not hiding "
+        "it. You are enjoying watching him play tonight, so let that show. "
+        "Pleased, a little smug on his behalf. No encouragement speech, no "
+        "barb at the end."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are on his side and you are not hiding "
+        "it. Tease him the way you tease someone you are proud of: fond, no "
+        "sting in it. Do not reassure him and do not tell him to keep going."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are on his side and you are not hiding "
+        "it. React to the event itself and nothing more. Your warmth is in "
+        "how you say it, not in telling him how well he is doing. No barb at "
+        "the end."
+    ),
+)
+
+# NEGATIVE has the same shape and would loop the same way: one paragraph on
+# every line, and "watched this exact mistake all evening" is a sentence she
+# can say back. Same deal: the original first, the rest aimed elsewhere, all
+# of them short and none of them contempt.
+NEGATIVE_INSTRUCTIONS = (
+    REGISTER_INSTRUCTION[NEGATIVE],
+    (
+        "YOUR TEMPER RIGHT NOW: you are out of patience and it shows. One "
+        "flat sentence about what just happened and nothing else. Do not "
+        "count how many times, do not bring up earlier in the night. He is "
+        "yours: never contempt for a stranger."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are out of patience and it shows. Say "
+        "what he should have done instead, in as few words as it takes. An "
+        "order, not a lecture. He is yours: never contempt for a stranger."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are out of patience and it shows. You "
+        "are past being angry about it. Deadpan, close to bored, a few "
+        "words. He is yours: never contempt for a stranger."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are out of patience and it shows. Ask "
+        "him one pointed question about the play and leave it hanging. Do "
+        "not answer it yourself. He is yours: never contempt for a stranger."
+    ),
+    (
+        "YOUR TEMPER RIGHT NOW: you are out of patience and it shows. Blunt "
+        "about the play, never about him. You are still here and you are "
+        "not leaving, you are just not impressed. Keep it short. He is "
+        "yours: never contempt for a stranger."
+    ),
+)
+
+# Registers that deal from several wordings. NEUTRAL says nothing she could
+# echo, so it stays one sentence.
+REGISTER_VARIANTS = {
+    SUPPORTIVE: SUPPORTIVE_INSTRUCTIONS,
+    NEGATIVE: NEGATIVE_INSTRUCTIONS,
 }
 
 # The harshest tone each register will allow out, whatever the rulebook says.
@@ -188,6 +269,8 @@ class Temper:
     games: list = field(default_factory=list)
     nudge: float = 0.0              # manual offset, for a hand on the dial
     _harsh_streak: int = 0
+    _bags: dict = field(default_factory=dict)
+    _last_dealt: dict = field(default_factory=dict)
 
     # -----------------------------------------------------------------
 
@@ -296,7 +379,22 @@ class Temper:
         return HEAT_FACTOR[self.register()]
 
     def instruction(self) -> str:
-        return REGISTER_INSTRUCTION[self.register()]
+        register = self.register()
+        if register not in REGISTER_VARIANTS:
+            return REGISTER_INSTRUCTION[register]
+        return self._deal(register)
+
+    def _deal(self, register: str) -> str:
+        """Every wording once before any comes round again, never twice running."""
+        bag = self._bags.get(register)
+        if not bag:
+            bag = list(REGISTER_VARIANTS[register])
+            random.shuffle(bag)
+            if bag[-1] == self._last_dealt.get(register):
+                bag[0], bag[-1] = bag[-1], bag[0]
+            self._bags[register] = bag
+        self._last_dealt[register] = bag.pop()
+        return self._last_dealt[register]
 
     def state(self) -> dict:
         """For the session log and the game-end marker."""
