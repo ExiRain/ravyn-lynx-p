@@ -149,6 +149,20 @@ def test_tone_instruction():
         check(f"{name} has an instruction", text.startswith("TONE: ")
               and len(text) > 20, text[:40])
 
+    # 2026-11-11: one warm sentence on 20 prompts came back as "honestly,
+    # I'm just glad" seven times. The wording moves, and names no feeling.
+    warm = [tone.instruction("warm") for _ in range(10)]
+    check("warm is never worded the same twice running",
+          all(a != b for a, b in zip(warm, warm[1:])))
+    check("and every wording is used before one returns",
+          len(set(warm[:len(tone.TONE_VARIANTS["warm"])]))
+          == len(tone.TONE_VARIANTS["warm"]))
+    check("no warm wording hands her 'glad' or 'pleased'",
+          not any(w in v.lower() for v in tone.TONE_VARIANTS["warm"]
+                  for w in ("glad", "pleased", "happy")))
+    check("every tone says it is a mood, not a script",
+          all(tone.MOOD_NOT_WORDS in tone.instruction(n) for n in tone.TONES))
+
     surprised = tone.instruction("warm", tone.read_death(9, 2, 0))
     check("a surprising death says so", "surprise" in surprised.lower())
 
