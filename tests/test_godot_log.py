@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from services import godot_log                       # noqa: E402
 from services.godot_log import GodotLog              # noqa: E402
+from orchestrator import avatar_review                # noqa: E402
 
 FAILURES: list[str] = []
 
@@ -65,6 +66,41 @@ def main():
     saved, godot_log._LOG = godot_log._LOG, None
     check("write() before init() is safe", godot_log.write("[]") == 0)
     godot_log._LOG = saved
+
+    print("\n--- at game end, the review writes itself ---")
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "godot"
+        log = GodotLog(out)
+
+        def sample(t, req, **kw):
+            r = {"t": t, "kind": "state", "voice": True, "focus": True,
+                 "group": "USER_FOCUS", "wandering": False,
+                 "expression": "NEUTRAL", "micro": False, "mood": 0.1,
+                 "tired": 0.0, "eye": [0, 0], "head": [0, 0, 0],
+                 "alpha": 1.0, "req_id": req}
+            r.update(kw)
+            return r
+
+        log.write(json.dumps([sample(1, "a"), sample(1.5, "a"),
+                              sample(5, "b", focus=False, wandering=True)]))
+        lines = [{"req_id": "a", "outcome": "spoken", "mood": 0.1,
+                  "said": "Clean.", "config_key": "MyKill"},
+                 {"req_id": "b", "outcome": "spoken", "mood": 0.1,
+                  "said": "Baron.", "config_key": "BaronKill"},
+                 {"req_id": "c", "outcome": "dropped_gate", "mood": 0.1}]
+        path = avatar_review.write_game_review(lines, log.path, out)
+        text = path.read_text(encoding="utf-8") if path else ""
+        check("a review file is written next to the avatar log",
+              path is not None and path.parent == out
+              and path.name.startswith("review-"), str(path))
+        check("it counts the spoken lines and the ones that were off",
+              text.startswith("2 of 2 spoken lines had avatar data; 1 with "
+                              "something off."), text[:80])
+        check("and lists only the line that was off, with why",
+              "Baron." in text and "Clean." not in text
+              and "looked at him 0%" in text, text)
+        check("no avatar log: nothing written, nothing raised",
+              avatar_review.write_game_review(lines, None, out) is None)
 
     print()
     if FAILURES:

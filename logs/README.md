@@ -5,6 +5,7 @@
       nb/          worker-<date>-<time>.jsonl    what the model was ASKED
                                                  (sent from the notebook)
       godot/       godot-<date>-<time>.jsonl     what her face and body DID
+                   review-<date>-<time>.txt      per game: lines where it was off
                                                  (sent from Godot)
       history.csv  the running table of every game
 
@@ -21,6 +22,11 @@ jiggles, expressions, micro expressions, the start and end of each line,
 mood, visibility — sent by Godot down the WebSocket it already has open
 (`ravyn-godot/scripts/action_log.gd`) and filed by `services/godot_log.py`.
 It holds no viewer data.
+
+At every game end the PC checks each line she spoke that game against what
+her avatar did — focus on him, expression for the mood sent, eyes and head,
+fade — and writes what was off to `godot/review-<date>-<time>.txt`
+(`orchestrator/avatar_review.py`). Nothing to run.
 
 ## Why pc/ and nb/ are not committed
 

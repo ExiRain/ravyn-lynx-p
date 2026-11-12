@@ -58,6 +58,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from orchestrator import session_metrics                           # noqa: E402
 from orchestrator.session_metrics import analyse, knob, said       # noqa: E402
 from tools import analyze_session                                  # noqa: E402
+from orchestrator.avatar_review import (                           # noqa: E402
+    FOCUS_MIN, _mean, avatar, expected_expression, load_godot)
 
 ROOT = analyze_session.ROOT
 
@@ -244,105 +246,8 @@ def _verdict(angles: set, seeds: set, landed_all: bool) -> str:
 
 
 # ------------------------------------------------------------------ avatar
-
-FOCUS_MIN = 0.9         # share of talking samples with attention on him
-GAZE_MAX = 0.35         # mean eye offset from straight at him, model units
-HEAD_MAX = 8.0          # mean head angle offset, degrees
-MOOD_SLACK = 0.05
-
-
-def load_godot(path: Path) -> dict:
-    """Records by req_id, in time order."""
-    by_id: dict[str, list] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            record = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(record, dict) and record.get("req_id"):
-            by_id.setdefault(record["req_id"], []).append(record)
-    for records in by_id.values():
-        records.sort(key=lambda r: r.get("t", 0))
-    return by_id
-
-
-def expected_expression(mood: float, tired: float) -> str:
-    """What eyes.gd shows for the mood and tired the PC sent."""
-    expression = "NEUTRAL"
-    if mood > 0.7:
-        expression = "SURPRISED"
-    elif mood < -0.7:
-        expression = "ANGRY"
-    elif mood < -0.4:
-        expression = "SAD"
-    if tired > 0.7:
-        expression = "SLEEPY"
-    return expression
-
-
-def _mean(values: list) -> float:
-    return sum(values) / len(values) if values else 0.0
-
-
-def avatar(pc: dict, records: list | None) -> dict | None:
-    """Her avatar during this line, and what in it disagrees with the line."""
-    if not records:
-        return None
-    talking = [r for r in records if r.get("kind") == "state" and r.get("voice")]
-    starts = [r["t"] for r in records if r.get("kind") == "voice_start"]
-    ends = [r["t"] for r in records if r.get("kind") == "voice_end"]
-    mood = float(pc.get("mood") or 0.0)
-    tired = float(pc.get("tired") or 0.0)
-    want = expected_expression(mood, tired)
-    shown = []
-    for r in talking:
-        if r.get("expression") and (not shown or shown[-1] != r["expression"]):
-            shown.append(r["expression"])
-    out = {
-        "samples": len(talking),
-        "voice_s": round(ends[-1] - starts[0], 1) if starts and ends else None,
-        "focus": round(_mean([1.0 if r.get("focus") else 0.0
-                              for r in talking]), 2) if talking else None,
-        "wandering": sum(1 for r in talking if r.get("wandering")),
-        "groups": sorted({r.get("group") for r in talking if r.get("group")}),
-        "expected": want,
-        "shown": shown,
-        "held_mood": talking[0].get("mood") if talking else None,
-        "gaze": round(_mean([sum(abs(v) for v in r.get("eye", [0, 0])) / 2
-                             for r in talking]), 2) if talking else None,
-        "head": round(_mean([sum(abs(v) for v in r.get("head", [0, 0, 0])) / 3
-                             for r in talking]), 1) if talking else None,
-        "alpha": min((r.get("alpha", 1.0) for r in talking), default=None),
-        "micro": sum(1 for r in talking if r.get("micro")),
-    }
-    problems = []
-    if not talking:
-        problems.append("no state while her voice played")
-    else:
-        if out["focus"] < FOCUS_MIN:
-            problems.append(f"looked at him {out['focus']:.0%} of the line")
-        if out["wandering"]:
-            problems.append(f"idle wandering in {out['wandering']} sample(s) "
-                            f"while talking")
-        if want not in shown:
-            problems.append(f"mood {mood:+.2f} wants {want}, showed "
-                            f"{'/'.join(shown) or 'nothing'}")
-        if out["held_mood"] is not None and \
-                abs(out["held_mood"] - max(-1.0, min(1.0, mood))) > MOOD_SLACK:
-            problems.append(f"Godot held mood {out['held_mood']:+.2f}, "
-                            f"sent {mood:+.2f}")
-        if out["gaze"] > GAZE_MAX:
-            problems.append(f"eyes off him by {out['gaze']} on average")
-        if out["head"] > HEAD_MAX:
-            problems.append(f"head turned {out['head']} deg on average")
-        if out["alpha"] is not None and out["alpha"] < 0.95:
-            problems.append(f"faded to {out['alpha']:.0%} while talking")
-        if out["micro"]:
-            problems.append(f"micro expression running in {out['micro']} "
-                            f"sample(s) while talking")
-    out["problems"] = problems
-    return out
-
+# The checks live in orchestrator/avatar_review.py, which also runs them on
+# its own at every game end.
 
 def print_avatar(a: dict | None, full: bool = False,
                  records: list | None = None) -> None:
