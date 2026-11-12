@@ -186,6 +186,11 @@ class SessionLog:
         except Exception as e:
             print(f"[session] spoke_sentence() failed: {e}")
 
+    def current_req_id(self) -> str:
+        """The req_id of the line in flight, or "" — sent on to Godot."""
+        with self._lock:
+            return (self._pending or {}).get("req_id", "") or ""
+
     def finished(self, outcome: str, note: str = "") -> None:
         """
         Close the record.

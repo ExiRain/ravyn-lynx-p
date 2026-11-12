@@ -168,7 +168,8 @@ async def set_visibility(percent: int, fade_ms: int) -> None:
     await send_text_to_godot(f"SHOW:{int(percent)}:{int(fade_ms)}")
 
 
-async def begin_utterance(mood: float = 0.0, tired: float = 0.0) -> None:
+async def begin_utterance(mood: float = 0.0, tired: float = 0.0,
+                          req_id: str = "") -> None:
     """Open an utterance: reset lip sync state, send mood, send START."""
     global _running_peak, _previous_env
 
@@ -181,6 +182,10 @@ async def begin_utterance(mood: float = 0.0, tired: float = 0.0) -> None:
     ts = time.strftime("%H:%M:%S")
     print(f"[{ts}][audio_server] START  mood={mood} tired={tired}")
 
+    # Which line this is, first, so everything Godot logs about it carries
+    # the same req_id as logs/pc/ and logs/nb/. An older Godot ignores it.
+    if req_id:
+        await send_text_to_godot(f"LINE:{req_id}")
     await send_text_to_godot(f"MOOD:{mood}")
     await send_text_to_godot(f"TIRED:{tired}")
 

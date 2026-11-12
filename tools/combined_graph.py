@@ -118,6 +118,7 @@ SOCKET_EDGES = [
 # all in one function, so the links are per sender; INFERRED, like payloads.
 GODOT_HANDLER = GD + "scripts_main_handle_websocket"
 MESSAGES = [
+    ("LINE:", PC + "services_audio_server_begin_utterance"),
     ("SHOW:", PC + "services_audio_server_set_visibility"),
     ("MOOD:", PC + "services_audio_server_begin_utterance"),
     ("TIRED:", PC + "services_audio_server_begin_utterance"),

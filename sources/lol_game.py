@@ -723,7 +723,18 @@ class LolGameSource:
         self._summary_due = 0.0
         log = session_log.get()
         log.report(scope="game", since_marker="game_start")
+        self._review_avatar(log)
         log.mark("game_end", **self.temper.state())
+
+    def _review_avatar(self, log) -> None:
+        """How her avatar acted on each line this game — orchestrator/avatar_review.py."""
+        from orchestrator import avatar_review
+        from services import godot_log
+        current = godot_log._LOG
+        if current is None or not current.enabled:
+            return
+        avatar_review.write_game_review(log.read_back("game_start"),
+                                        current.path, current.directory)
 
     def _poll_game(self):
         data = self._fetch()

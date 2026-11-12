@@ -353,7 +353,8 @@ def start_response_listener(
 
     def _play(opening, rest: list[str], mood: float, tired: float,
               lang: str, had_clients: bool):
-        _run_async(audio_server.begin_utterance(mood, tired), timeout=5)
+        _run_async(audio_server.begin_utterance(
+            mood, tired, session_log.get().current_req_id()), timeout=5)
         try:
             _stream(opening, rest, mood, tired, lang, had_clients)
         finally:

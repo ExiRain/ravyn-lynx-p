@@ -1,9 +1,25 @@
 """
-Both halves of one line, side by side.
+All three sides of one line, side by side: what she said, what the model was
+asked, and what her avatar did while she said it.
 
-    python tools/join_logs.py                     # newest session + its nb log
+    python tools/join_logs.py                     # newest session + its nb and godot logs
     python tools/join_logs.py logs/pc/session-x.jsonl
     python tools/join_logs.py session.jsonl worker.jsonl --seq 14
+    python tools/join_logs.py --godot logs/godot/godot-x.jsonl
+
+THE AVATAR. Godot logs its state twice a second while her voice plays —
+focus on the viewer, look group, eyes, head, expression, the mood it holds —
+stamped with the line's req_id (logs/godot/, sent over the audio WebSocket).
+Each line is checked against what the PC sent for it:
+
+    focus      she should look at him for the whole line: share of samples
+               with attention on, and any idle wandering while talking
+    expression the one her mood implies (eyes.gd set_mood: >0.7 SURPRISED,
+               <-0.7 ANGRY, <-0.4 SAD, tired >0.7 SLEEPY, else NEUTRAL)
+               against the ones she actually showed
+    mood       what Godot holds against what was sent
+    gaze       how far eyes and head were from straight at him (0 = on him)
+    visible    lowest alpha while talking (ghost mode should have her shown)
 
 The PC records what she SAID and the knobs that produced it. The notebook
 records what the model was ASKED — the framed prompt, the seed, the raw output
@@ -42,6 +58,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from orchestrator import session_metrics                           # noqa: E402
 from orchestrator.session_metrics import analyse, knob, said       # noqa: E402
 from tools import analyze_session                                  # noqa: E402
+from orchestrator.avatar_review import (                           # noqa: E402
+    FOCUS_MIN, _mean, avatar, expected_expression, load_godot)
 
 ROOT = analyze_session.ROOT
 
@@ -85,7 +103,9 @@ def diagnose(pc: dict, nb: dict | None) -> str:
     return ""
 
 
-def print_joined(pc: dict, nb: dict | None, full: bool = False) -> None:
+def print_joined(pc: dict, nb: dict | None, full: bool = False,
+                 avatar_info: dict | None = None, show_model: bool = True,
+                 godot_records: list | None = None) -> None:
     stamp = pc.get("iso", "")[-8:] or pc.get("ts", "")
     tag = knob(pc, "config_key") or pc.get("source", "")
     knobs = "/".join(x for x in (pc.get("angle_id"), knob(pc, "tone"),
@@ -95,7 +115,12 @@ def print_joined(pc: dict, nb: dict | None, full: bool = False) -> None:
     if pc.get("trigger_text"):
         print(f"    trigger : {pc['trigger_text'][:88]}")
 
-    if nb:
+    if pc.get("mood") is not None or pc.get("tired") is not None:
+        print(f"    sent    : mood {float(pc.get('mood') or 0):+.2f}, "
+              f"tired {float(pc.get('tired') or 0):.2f}"
+              + (f", {pc.get('outcome')}" if pc.get("outcome") else ""))
+
+    if nb and show_model:
         bits = []
         if nb.get("seed") is not None:
             bits.append(f"seed {nb['seed']}")
@@ -114,9 +139,13 @@ def print_joined(pc: dict, nb: dict | None, full: bool = False) -> None:
 
     print(f"    said    : {said(pc)[:88]}")
 
-    why = diagnose(pc, nb)
-    if why:
-        print(f"    -> {why}")
+    if show_model:
+        why = diagnose(pc, nb)
+        if why:
+            print(f"    -> {why}")
+
+    if avatar_info is not None or godot_records is not None:
+        print_avatar(avatar_info, full=full, records=godot_records)
 
     if full and nb:
         for label, key in (("--- framed prompt", "framed"),
@@ -216,6 +245,93 @@ def _verdict(angles: set, seeds: set, landed_all: bool) -> str:
     return "no single explanation; read the prompts with --seq"
 
 
+# ------------------------------------------------------------------ avatar
+# The checks live in orchestrator/avatar_review.py, which also runs them on
+# its own at every game end.
+
+def print_avatar(a: dict | None, full: bool = False,
+                 records: list | None = None) -> None:
+    if a is None:
+        print("    avatar  : no Godot record for this line")
+        return
+    bits = [f"{a['samples']} samples"]
+    if a["voice_s"] is not None:
+        bits.append(f"voice {a['voice_s']}s")
+    if a["focus"] is not None:
+        bits.append(f"focus {a['focus']:.0%}")
+    if a["groups"]:
+        bits.append("group " + "/".join(a["groups"]))
+    bits.append(f"expr {'/'.join(a['shown']) or '-'} (wants {a['expected']})")
+    if a["gaze"] is not None:
+        bits.append(f"eyes {a['gaze']} head {a['head']}")
+    print(f"    avatar  : {', '.join(bits)}")
+    for p in a["problems"]:
+        print(f"    !  {p}")
+    if full and records:
+        print("\n--- avatar timeline\n")
+        t0 = records[0].get("t", 0)
+        for r in records:
+            extra = {k: v for k, v in r.items()
+                     if k not in ("t", "kind", "req_id", "iso", "pc_t")}
+            print(f"    +{r.get('t', 0) - t0:6.2f}s  {r.get('kind'):<16} "
+                  f"{json.dumps(extra, ensure_ascii=False)[:110]}")
+
+
+def report_avatar(pc_records: list[dict], godot: dict) -> None:
+    spoken = [r for r in pc_records if r.get("outcome") == "spoken"]
+    if not spoken:
+        return
+    joined = [(pc, avatar(pc, godot.get(pc.get("req_id", ""))))
+              for pc in spoken]
+    seen = [(pc, a) for pc, a in joined if a is not None]
+
+    print("\n" + "-" * 72)
+    print("  WHAT HER AVATAR DID WHILE SHE SPOKE")
+    print("-" * 72)
+    print(f"  spoken lines with a Godot record : {len(seen)}/{len(spoken)}")
+    if not seen:
+        print("  (Godot scripts 1.8+ log per line; an older build logs nothing"
+              " joinable.)\n")
+        return
+
+    def count(test) -> int:
+        return sum(1 for _, a in seen if test(a))
+
+    focus = [a["focus"] for _, a in seen if a["focus"] is not None]
+    print(f"  focus on him, mean               : {_mean(focus):.0%}")
+    print(f"  lines below {FOCUS_MIN:.0%} focus            : "
+          f"{count(lambda a: a['focus'] is not None and a['focus'] < FOCUS_MIN)}")
+    print(f"  lines with idle wandering         : "
+          f"{count(lambda a: a['wandering'])}")
+    print(f"  lines with the wrong expression   : "
+          f"{count(lambda a: a['samples'] and a['expected'] not in a['shown'])}")
+    print(f"  lines where Godot's mood differed : "
+          f"{count(lambda a: any(p.startswith('Godot held') for p in a['problems']))}")
+    print(f"  lines with eyes or head off him   : "
+          f"{count(lambda a: any(p.startswith(('eyes', 'head')) for p in a['problems']))}")
+
+    flagged = [(pc, a) for pc, a in seen if a["problems"]]
+    if flagged:
+        print(f"\n  {len(flagged)} line(s) with something off:")
+        for pc, a in flagged:
+            print_joined(pc, None, avatar_info=a, show_model=False)
+    print()
+
+
+def matching_godot(pc_records: list) -> Path | None:
+    """The logs/godot/ file sharing the most req_ids with this session."""
+    wanted = {r.get("req_id") for r in pc_records if r.get("req_id")}
+    best, best_hits = None, 0
+    for path in sorted((ROOT / "logs" / "godot").glob("godot-*.jsonl")):
+        try:
+            hits = len(wanted & set(load_godot(path)))
+        except OSError:
+            continue
+        if hits > best_hits:
+            best, best_hits = path, hits
+    return best
+
+
 def matching_worker(pc_records: list) -> Path | None:
     """The logs/nb/ file sharing the most req_ids with this session."""
     wanted = {r.get("req_id") for r in pc_records if r.get("req_id")}
@@ -243,6 +359,8 @@ def main() -> int:
     ap.add_argument("worker", nargs="?", help="notebook logs/worker-*.jsonl")
     ap.add_argument("--seq", type=int,
                     help="print one line in full — prompt, raw, said")
+    ap.add_argument("--godot", help="avatar logs/godot/godot-*.jsonl "
+                                    "(default: the one sharing the most lines)")
     ap.add_argument("--top", type=int, default=12)
     ap.add_argument("--similarity", type=float,
                     default=session_metrics.DEFAULT_SIMILARITY)
@@ -254,29 +372,34 @@ def main() -> int:
         return 1
 
     pc_records, _ = analyze_session.load(session)
-    if args.worker:
-        worker_path = Path(args.worker)
-    else:
-        worker_path = matching_worker(pc_records)
-        if worker_path is None:
-            print("No notebook log in logs/nb/ shares a request with this "
-                  "session. Is the notebook sending it (RAVYN_WORKER_LOG_SHIP)?"
-                  " Or pass one explicitly.")
-            return 1
-        print(f"Notebook log: {worker_path}")
-
-    if not worker_path.exists():
-        print(f"No such file: {worker_path}")
-        return 1
-
     if not pc_records:
         print(f"{session}: nothing to join")
         return 1
 
-    worker, meta = load_worker(worker_path)
-    if not worker:
-        print(f"{worker_path}: no worker records with a req_id. An older "
-              f"notebook build does not stamp one.")
+    # The avatar log stands on its own: no notebook log is needed for it.
+    godot_path = Path(args.godot) if args.godot else matching_godot(pc_records)
+    godot = load_godot(godot_path) if godot_path and godot_path.exists() else {}
+    if godot_path and godot:
+        print(f"Avatar log: {godot_path}")
+
+    worker, meta = {}, {}
+    worker_path = Path(args.worker) if args.worker \
+        else matching_worker(pc_records)
+    if worker_path is None:
+        print("No notebook log in logs/nb/ shares a request with this "
+              "session. Is the notebook sending it (RAVYN_WORKER_LOG_SHIP)?"
+              " Or pass one explicitly.")
+    elif not worker_path.exists():
+        print(f"No such file: {worker_path}")
+        return 1
+    else:
+        if not args.worker:
+            print(f"Notebook log: {worker_path}")
+        worker, meta = load_worker(worker_path)
+        if not worker:
+            print(f"{worker_path}: no worker records with a req_id. An older "
+                  f"notebook build does not stamp one.")
+    if not worker and not godot:
         return 1
 
     if args.seq:
@@ -284,10 +407,16 @@ def main() -> int:
         if pc is None:
             print(f"No line #{args.seq} in {session.name}")
             return 1
-        print_joined(pc, worker.get(pc.get("req_id", "")), full=True)
+        records = godot.get(pc.get("req_id", ""))
+        print_joined(pc, worker.get(pc.get("req_id", "")), full=True,
+                     avatar_info=avatar(pc, records) if godot else None,
+                     godot_records=records if godot else None)
         return 0
 
-    report(pc_records, worker, meta, args.similarity, args.top)
+    if worker:
+        report(pc_records, worker, meta, args.similarity, args.top)
+    if godot:
+        report_avatar(pc_records, godot)
     return 0
 
 

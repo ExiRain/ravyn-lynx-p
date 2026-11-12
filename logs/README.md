@@ -5,6 +5,7 @@
       nb/          worker-<date>-<time>.jsonl    what the model was ASKED
                                                  (sent from the notebook)
       godot/       godot-<date>-<time>.jsonl     what her face and body DID
+                   review-<date>-<time>.txt      per game: lines where it was off
                                                  (sent from Godot)
       history.csv  the running table of every game
 
@@ -14,14 +15,18 @@ its worker log over RabbitMQ (`ravyn.log`) as it writes it, and
 name. The notebook keeps its own copy as well.
 
     python tools/analyze_session.py      # newest session in pc/
-    python tools/join_logs.py            # newest session joined with its nb/ log
-    python tools/godot_stats.py          # newest avatar log, counted
+    python tools/join_logs.py            # newest session joined with its nb/ and godot/ logs
 
 The avatar's log is one record per action — blinks, looks, ear perks and
 jiggles, expressions, micro expressions, the start and end of each line,
 mood, visibility — sent by Godot down the WebSocket it already has open
 (`ravyn-godot/scripts/action_log.gd`) and filed by `services/godot_log.py`.
 It holds no viewer data.
+
+At every game end the PC checks each line she spoke that game against what
+her avatar did — focus on him, expression for the mood sent, eyes and head,
+fade — and writes what was off to `godot/review-<date>-<time>.txt`
+(`orchestrator/avatar_review.py`). Nothing to run.
 
 ## Why pc/ and nb/ are not committed
 
