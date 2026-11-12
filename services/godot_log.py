@@ -12,7 +12,7 @@ action_log.gd), as `LOG:<json array>`, and this files them:
       godot/   godot-<date>-<time>.jsonl     what her face and body did
 
 One file per PC run, named when the PC starts, so the three logs of one
-stream sit side by side. Count them with tools/godot_stats.py.
+stream sit side by side. tools/join_logs.py sets them beside each line.
 
 Each record keeps Godot's own clock (`t`) and gets the PC's (`pc_t`): Godot
 holds records while the socket is down and sends them late, so the two can

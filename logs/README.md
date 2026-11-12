@@ -15,7 +15,6 @@ name. The notebook keeps its own copy as well.
 
     python tools/analyze_session.py      # newest session in pc/
     python tools/join_logs.py            # newest session joined with its nb/ and godot/ logs
-    python tools/godot_stats.py          # newest avatar log, counted
 
 The avatar's log is one record per action — blinks, looks, ear perks and
 jiggles, expressions, micro expressions, the start and end of each line,
