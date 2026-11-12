@@ -45,6 +45,7 @@ from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from app.settings import get_settings
+from services import godot_log
 
 # Read per call rather than copied into a local: `--ghost` is written onto the
 # class in app/main.py, and a snapshot taken at import time would have been
@@ -124,7 +125,11 @@ async def websocket_endpoint(ws: WebSocket):
 
     try:
         while True:
-            await ws.receive_text()
+            # Godot talks back in two ways: "ping" every frame, and
+            # LOG:<json> — what the avatar just did. See services/godot_log.py.
+            msg = await ws.receive_text()
+            if msg.startswith("LOG:"):
+                godot_log.write(msg[4:])
     except WebSocketDisconnect:
         print("[audio_server] Godot disconnected")
     finally:

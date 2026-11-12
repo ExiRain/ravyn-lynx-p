@@ -36,8 +36,8 @@ from dataclasses import dataclass
 TONES = ["warm", "light", "dry", "sharp", "roast"]
 
 TONE_INSTRUCTION = {
-    "warm": "Be genuinely pleased. No barb at the end, no undercutting "
-            "yourself — you are allowed to just be glad about this one.",
+    "warm": "This one went well and you are not going to pretend otherwise. "
+            "No barb at the end, no undercutting yourself.",
     "light": "Amused and light. You are teasing, not scoring points; he can "
              "hear that you are on his side.",
     "dry": "Flat and dry. State it, do not decorate it. The lack of reaction "
@@ -47,6 +47,61 @@ TONE_INSTRUCTION = {
     "roast": "Full roast. Exasperated, merciless, still his — the mockery of "
              "someone who belongs to him, never contempt for a stranger.",
 }
+
+# The same tone in other words. A tone that comes up line after line was one
+# sentence on every prompt, and a 9B model says its instructions back: on
+# 2026-11-11 a game he was winning from bot got "warm" on 20 of 26 requests,
+# and "you are allowed to just be glad" came out as "honestly, I'm just glad"
+# seven times. Warm and light may repeat as MOODS (see ToneLadder), so their
+# wording is what has to move: dealt without replacement, never the same one
+# twice running. None of them names the feeling in a word she can lift.
+TONE_VARIANTS = {
+    "warm": (
+        "This one went well and you are not going to pretend otherwise. No "
+        "barb at the end, no undercutting yourself.",
+        "Approval, plainly. Say what was good about it and leave it there — "
+        "no sting in the tail.",
+        "You liked that, and it is allowed to show. Keep it short and let "
+        "the compliment stand on its own.",
+        "Quietly satisfied. Understate it: a small nod lands better than a "
+        "speech. Nothing sour after it.",
+        "Smug on his behalf. This is the part of the evening you will bring "
+        "up later. No barb at him.",
+    ),
+    "light": (
+        "Amused and light. You are teasing, not scoring points; he can "
+        "hear that you are on his side.",
+        "Playful. A raised eyebrow, not a verdict — the joke is with him, "
+        "not at him.",
+        "Easy and a little cheeky. Poke at it once and move on.",
+        "Entertained. Treat it as something funny that happened, not "
+        "something to judge.",
+    ),
+}
+
+# Rides on every TONE block. The tone is how she feels, not what she says.
+MOOD_NOT_WORDS = ("This is your mood, not your script: let it colour the "
+                  "line, and do not use these words or announce the feeling.")
+
+_bags: dict[str, list[str]] = {}
+_last_dealt: dict[str, str] = {}
+
+
+def _wording(tone: str) -> str:
+    """Every wording of a tone once before any comes round again."""
+    variants = TONE_VARIANTS.get(tone)
+    if not variants:
+        return TONE_INSTRUCTION.get(tone, TONE_INSTRUCTION["dry"])
+    bag = _bags.get(tone)
+    if not bag:
+        bag = list(variants)
+        random.shuffle(bag)
+        if bag[-1] == _last_dealt.get(tone):
+            bag[0], bag[-1] = bag[-1], bag[0]
+        _bags[tone] = bag
+    _last_dealt[tone] = bag.pop()
+    return _last_dealt[tone]
+
 
 # What "low deaths win games" mode adds, from death six onward. Kept separate
 # from the tone so it does not turn into a fixed prefix: it is a standing
@@ -208,7 +263,7 @@ def _step_down(tone: str) -> str:
 
 def instruction(tone: str, verdict: Verdict | None = None) -> str:
     """The TONE block for the prompt."""
-    parts = [TONE_INSTRUCTION.get(tone, TONE_INSTRUCTION["dry"])]
+    parts = [_wording(tone)]
 
     if verdict is not None:
         if verdict.surprised:
@@ -217,4 +272,5 @@ def instruction(tone: str, verdict: Verdict | None = None) -> str:
         if verdict.lecture:
             parts.append(DEATH_LECTURE)
 
+    parts.append(MOOD_NOT_WORDS)
     return "TONE: " + " ".join(parts)

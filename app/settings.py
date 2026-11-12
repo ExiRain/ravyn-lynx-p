@@ -525,10 +525,13 @@ class Settings:
     # Both machines' logs in one place:
     #   logs/pc/       this machine's session logs
     #   logs/nb/       the notebook's worker logs, sent over RabbitMQ
+    #   logs/godot/    what the avatar did, sent by Godot over its WebSocket
     #   logs/history.csv   the running table of every game
     SESSION_LOG_DIR = "logs/pc"
     NB_LOG_DIR = "logs/nb"
     NB_LOG_ENABLED = True
+    GODOT_LOG_DIR = "logs/godot"
+    GODOT_LOG_ENABLED = True
     HISTORY_CSV = "logs/history.csv"
 
     # Also keep the SITUATION block, the angle instruction and the tone

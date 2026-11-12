@@ -32,7 +32,9 @@ FAILURES: list[str] = []
 
 # Meant to outlive a game. Anything else that differs is a leak.
 STREAM_LONG = {"temper", "_unhandled_logged", "queue", "identity", "client",
-               "notes", "_quotes", "on_active_change", "_fetch", "angles"}
+               "notes", "_quotes", "on_active_change", "_fetch", "angles",
+               # Seed decks: a seed used in game one should not open game two.
+               "_quote_decks", "_quote_last"}
 
 ME = "Серый Экран#RU"
 A_GAME = [

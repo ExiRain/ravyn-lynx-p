@@ -485,7 +485,30 @@ def test_cheer_and_boo():
           queue.pop() is not None)
 
 
+def test_seeds_are_dealt():
+    """
+    2026-11-11: three double kills in one game all drew the seed "Even I'm
+    impressed. Almost." and she said it back three times.
+    """
+    print("\n--- seed quotes are dealt, not drawn ---")
+    from pathlib import Path
+    from sources.lol_game import LolGameSource
+
+    data = Path(__file__).resolve().parent.parent / "data"
+    src = LolGameSource(SignalQueue(), data)
+    pool = src._quotes["game_state"]["game_start"]
+    drawn = [src._pick_quote("game_state", "game_start")
+             for _ in range(len(pool) * 3)]
+    check("every seed in a pool is used before one repeats",
+          sorted(drawn[:len(pool)]) == sorted(pool), str(drawn[:len(pool)]))
+    check("and never the same one twice running",
+          all(a != b for a, b in zip(drawn, drawn[1:])) or len(pool) < 2)
+    check("a missing pool is still just empty",
+          src._pick_quote("no", "such", "pool") == "")
+
+
 def main():
+    test_seeds_are_dealt()
     test_state()
     test_role_detection()
     test_dragons_and_mood()

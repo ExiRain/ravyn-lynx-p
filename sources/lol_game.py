@@ -188,6 +188,9 @@ class LolGameSource:
 
         # load quotes
         self._quotes = self._load_quotes(data_dir / "game_quotes.json")
+        # Seeds are dealt, not drawn: see _pick_quote. Stream-long on purpose.
+        self._quote_decks: dict = {}
+        self._quote_last: dict = {}
 
         # What he has told her about his own account — roles, champions,
         # matchups. Optional: an absent or broken file just disables those
@@ -270,7 +273,20 @@ class LolGameSource:
             else:
                 return ""
         if isinstance(obj, list) and obj:
-            return random.choice(obj)
+            # A shuffled deck per pool, not random.choice: on 2026-11-11
+            # three double kills in one game all drew "Even I'm impressed.
+            # Almost.", and she said it back three times. Every seed in a
+            # pool is used once before any repeats, never twice running.
+            deck = self._quote_decks.get(keys)
+            if not deck:
+                deck = list(obj)
+                random.shuffle(deck)
+                last = self._quote_last.get(keys)
+                if len(deck) > 1 and deck[-1] == last:
+                    deck[0], deck[-1] = deck[-1], deck[0]
+                self._quote_decks[keys] = deck
+            self._quote_last[keys] = deck.pop()
+            return self._quote_last[keys]
         return ""
 
     def _champ(self, name: str) -> str:

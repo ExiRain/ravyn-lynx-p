@@ -129,6 +129,12 @@ def main():
         receiver = LogReceiver(root / settings.NB_LOG_DIR)
         Thread(target=receiver.run, daemon=True, name="nb-log").start()
 
+    # What the avatar did, sent by Godot over the audio WebSocket and filed
+    # in logs/godot/. See services/godot_log.py and tools/godot_stats.py.
+    from services import godot_log
+    godot_log.init(root / settings.GODOT_LOG_DIR,
+                   enabled=settings.GODOT_LOG_ENABLED and not TEST_MODE)
+
     # --- Orchestrator core ---
     # Built first: the response listener clears its busy flag, so it needs
     # the dispatcher to exist before it starts consuming.
