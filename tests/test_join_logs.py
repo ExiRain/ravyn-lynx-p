@@ -207,7 +207,55 @@ def test_it_runs_end_to_end():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def state(t, req, **kw):
+    base = {"t": t, "kind": "state", "req_id": req, "voice": True,
+            "talking": True, "focus": True, "group": "USER_FOCUS",
+            "wandering": False, "expression": "NEUTRAL", "micro": False,
+            "mood": 0.1, "tired": 0.2, "eye": [0.0, 0.0],
+            "head": [0.0, 0.0, 0.0], "alpha": 1.0}
+    base.update(kw)
+    return base
+
+
+def test_the_avatar_is_joined_by_line():
+    print("\n--- the avatar during each line, against what was sent ---")
+    check("mood maps to the expression eyes.gd shows",
+          [join_logs.expected_expression(m, t) for m, t in
+           ((0.8, 0), (-0.8, 0), (-0.5, 0), (0.1, 0.9), (0.1, 0))]
+          == ["SURPRISED", "ANGRY", "SAD", "SLEEPY", "NEUTRAL"])
+
+    good = [{"t": 10.0, "kind": "voice_start", "req_id": "a"},
+            state(10.1, "a"), state(10.6, "a"), state(11.1, "a"),
+            {"t": 12.0, "kind": "voice_end", "req_id": "a"}]
+    a = join_logs.avatar({"mood": 0.1, "tired": 0.2}, good)
+    check("a line where she looked at him with the right face is clean",
+          a["problems"] == [] and a["focus"] == 1.0 and a["voice_s"] == 2.0,
+          str(a))
+
+    bad = [state(20.0, "b", focus=False, wandering=True, group="WANDERING",
+                 eye=[0.8, 0.4], head=[20, 5, 2]),
+           state(20.5, "b", expression="SAD", mood=-0.5),
+           state(21.0, "b", alpha=0.4, micro=True)]
+    b = join_logs.avatar({"mood": 0.9, "tired": 0.0}, bad)
+    problems = " | ".join(b["problems"])
+    for what in ("looked at him", "idle wandering", "wants SURPRISED",
+                 "Godot held mood", "faded to", "micro expression"):
+        check(f"flags: {what}", what in problems, problems)
+    check("no Godot record is None, not a crash",
+          join_logs.avatar({"mood": 0}, None) is None)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "godot-20261112-200000.jsonl"
+        lines = good + bad + [{"t": 1.0, "kind": "blink"}]
+        path.write_text("\n".join(json.dumps(x) for x in lines) + "\nnope\n",
+                        encoding="utf-8")
+        loaded = join_logs.load_godot(path)
+        check("the avatar log is read by req_id; unstamped records ignored",
+              sorted(loaded) == ["a", "b"] and len(loaded["a"]) == 5)
+
+
 def main() -> int:
+    test_the_avatar_is_joined_by_line()
     test_loading_and_matching()
     test_the_model_ignored_the_direction()
     test_the_angle_never_arrived()
