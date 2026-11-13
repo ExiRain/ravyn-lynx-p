@@ -5,8 +5,8 @@
       nb/          worker-<date>-<time>.jsonl    what the model was ASKED
                                                  (sent from the notebook)
       godot/       godot-<date>-<time>.jsonl     what her face and body DID
-                   review-<date>-<time>.txt      per game: lines where it was off
                                                  (sent from Godot)
+                   review-<date>-<time>.txt      per game: lines where it was off
       history.csv  the running table of every game
 
 Both halves of a session land here on the PC: the notebook sends each line of

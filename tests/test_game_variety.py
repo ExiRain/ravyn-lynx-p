@@ -471,6 +471,15 @@ def test_cheer_and_boo():
               not second.skip_llm)
         check(f"{label}: which knows the result",
               second.context.get("won") is won)
+        # 2026-11-12: a win answered with "you're not even trying to help".
+        check(f"{label}: and leads her direction with it",
+              second.context.get("angle", "").startswith(
+                  "HE WON THIS GAME" if won else "HE LOST THIS GAME"),
+              second.context.get("angle", "")[:60])
+        if won:
+            check("win: the line gets a warm tone, not none",
+                  second.context.get("tone") in ("warm", "light"),
+                  str(second.context.get("tone")))
 
     # The noise ignores the throttling that governs everything else.
     queue = SignalQueue()
