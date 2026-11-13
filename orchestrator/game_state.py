@@ -125,6 +125,7 @@ class GameState:
 
     # one-shot so a broken identity does not print every two seconds
     _warned_no_team: bool = False
+    _warned_bad_snapshot: bool = False
 
     # ---------------------------------------------------------
     # derived
@@ -278,9 +279,23 @@ class GameState:
         on the "chaotic mix" of a ten-man enemy team. Better to know the minute
         and nothing else.
         """
-        self.game_time = data.get("gameData", {}).get("gameTime", 0.0) or 0.0
-
         players = data.get("allPlayers", []) or []
+
+        # A snapshot that contradicts the game so far is thrown away whole,
+        # and the last good one stands. On 2026-11-12 the poll that read the
+        # GameEnd (he had just closed the client) put him on the ENEMY team as
+        # Jinx jungle 10/5/0 when he was Jinx bot 15/6/7 — and her end-of-game
+        # line was written from it ("not even trying to help": 0 assists).
+        # A score never goes down within a game, and he never changes team.
+        why = self._contradicts(players, my_team, my_names)
+        if why:
+            if not self._warned_bad_snapshot:
+                self._warned_bad_snapshot = True
+                print(f"[state] Ignoring a game snapshot that contradicts the "
+                      f"game so far ({why}) — keeping the last good one")
+            return
+
+        self.game_time = data.get("gameData", {}).get("gameTime", 0.0) or 0.0
 
         if not my_team:
             if not self._warned_no_team:
@@ -347,6 +362,26 @@ class GameState:
         if mine_cs:
             better = sum(1 for cs, mine in cs_by_player if not mine and cs > mine_cs[0])
             self.cs_rank = better + 1
+
+    def _contradicts(self, players: list, my_team: str,
+                     my_names: set[str]) -> str:
+        """Why this snapshot cannot be the same game as the last one, or ""."""
+        if not my_team or not players:
+            return ""
+        me = [p for p in players if self._is_me(p, my_names)]
+        if me and not any(p.get("team", "") == my_team for p in me):
+            return f"him on team {me[0].get('team')!r}, not {my_team!r}"
+        for p in me:
+            if p.get("team", "") != my_team:
+                continue
+            scores = p.get("scores", {}) or {}
+            for name, before in (("kills", self.kills),
+                                 ("deaths", self.deaths),
+                                 ("assists", self.assists)):
+                now = int(scores.get(name, 0) or 0)
+                if now < before:
+                    return f"his {name} went from {before} to {now}"
+        return ""
 
     @staticmethod
     def _is_me(player: dict, my_names: set[str]) -> bool:

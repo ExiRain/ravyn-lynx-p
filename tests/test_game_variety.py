@@ -516,7 +516,38 @@ def test_seeds_are_dealt():
           src._pick_quote("no", "such", "pool") == "")
 
 
+def test_bad_snapshot_is_ignored():
+    """
+    2026-11-12: the poll that read the GameEnd, as he closed the client, put
+    him on the enemy team as Jinx jungle 10/5/0 (he was Jinx bot 15/6/7),
+    and her end-of-game line was written from it.
+    """
+    print("\n--- a snapshot that contradicts the game is ignored ---")
+    s = GameState()
+    s.update(snapshot(game_time=1800.0, my_kills=15, my_deaths=6),
+             "ORDER", MY_NAMES)
+    good = (s.kills, s.deaths, s.game_time, list(s.enemy_champions))
+
+    flipped = snapshot(game_time=1810.0, my_kills=10, my_deaths=5)
+    flipped["allPlayers"][0]["team"] = "CHAOS"
+    s.update(flipped, "ORDER", MY_NAMES)
+    check("him on the other team: the last good state stands",
+          (s.kills, s.deaths, s.game_time, list(s.enemy_champions)) == good,
+          f"{s.kills}/{s.deaths} at {s.game_time}")
+
+    s.update(snapshot(game_time=1815.0, my_kills=10, my_deaths=6),
+             "ORDER", MY_NAMES)
+    check("his score going down: ignored too",
+          s.kills == 15 and s.game_time == 1800.0, f"{s.kills} kills")
+
+    s.update(snapshot(game_time=1820.0, my_kills=16, my_deaths=6),
+             "ORDER", MY_NAMES)
+    check("and the next good snapshot is taken as normal",
+          s.kills == 16 and s.game_time == 1820.0)
+
+
 def main():
+    test_bad_snapshot_is_ignored()
     test_seeds_are_dealt()
     test_state()
     test_role_detection()
