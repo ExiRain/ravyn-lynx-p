@@ -89,6 +89,17 @@ IGNORED_EVENTS = frozenset({"GameStart", "MinionsSpawning", "FirstBlood",
                             "InhibRespawned"})
 MUST_LAND_ANGLES = frozenset({"dragon_soul_ours", "dragon_soul_theirs"})
 
+# The result, said first in her end-of-game direction. Before this the only
+# sign of it was the seed ("Victory. As expected."), and game-end lines got no
+# tone at all: on 2026-11-12 a win was answered with "is exactly what I
+# expected from you when you're not even trying to help", read off his
+# 0 assists. A win now leads with the win, and gets a warm tone.
+GAME_RESULT_WON = ("HE WON THIS GAME. Whatever you say about it, it is on "
+                   "the way to saying he won: pleased, smug on his behalf if "
+                   "you like. No insult, no complaint about how he played.")
+GAME_RESULT_LOST = ("HE LOST THIS GAME. You may be annoyed about it, but it "
+                    "is over: no lecture on what he should have done.")
+
 
 EVENT_CONFIG = {
     "GameStart":         {"priority": 2, "ttl": None},
@@ -1466,6 +1477,14 @@ class LolGameSource:
         # them is where the variety comes from. The theme shifts it a step —
         # she is harder on him in his worst role, softer when his own tags say
         # the enemy team can hold him still.
+        won = ctx.get("won") if event_type == "GameEnd" else None
+        if won is not None:
+            result = GAME_RESULT_WON if won else GAME_RESULT_LOST
+            ctx["angle"] = (result + " " + ctx["angle"]) if ctx.get("angle") \
+                else result
+            if won and verdict is None:
+                verdict = tone_engine.Verdict(tone="warm", react_chance=1.0)
+
         if verdict is None:
             verdict = self._ambient_verdict(event_type)
         if verdict is not None:
